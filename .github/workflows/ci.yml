@@ -20,9 +20,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # No build manifest exists yet (no CMakeLists.txt / package.json), so there
-      # is nothing to install, build or test. This guard keeps copyrighted disc
-      # content out of the public repo until real build steps are added.
+      # Keeps copyrighted disc content out of the public repo.
       - name: Guard against committed game data
         run: |
           bad=$(git ls-files | grep -Ei '\.(iso|bin|cue|img|mdf|mds|nrg|chd|elf|irx)$|(^|/)(SLPM|SLUS|SLES)_' || true)
@@ -32,3 +30,34 @@ jobs:
             exit 1
           fi
           echo "No game data tracked."
+
+      # Compiler-free check that cmake/K2Modules.cmake rejects forbidden module edges.
+      - name: Module dependency rule (negative test)
+        run: >
+          cmake -DFIXTURE_DIR=tests/cmake/dep_violation
+          -DWORK_DIR=${{ runner.temp }}/k2dv
+          -P tests/cmake/run_dep_violation.cmake
+
+  build-windows:
+    runs-on: windows-latest
+    # First build fetches SDL3, raylib, imgui and a FFmpeg prebuilt.
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Configure
+        run: cmake --preset msvc-x64
+
+      - name: Build
+        run: cmake --build --preset msvc-x64-debug --parallel
+
+      # bash so the k2_guard test resolves Git for Windows' sh.
+      - name: Test
+        shell: bash
+        run: ctest --preset msvc-x64
+
+      - name: Smoke run
+        shell: bash
+        run: out/build/msvc-x64/app/Debug/kessen2.exe --version

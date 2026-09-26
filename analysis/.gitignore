@@ -1,0 +1,9 @@
+# Ghidra projects (also covered by the root .gitignore)
+*.gzf
+*.rep/
+*.gpr
+*.lock
+*.lock~
+# Derived tables are kept local until a commit policy is decided (see README.md).
+*.csv
+*.toml
