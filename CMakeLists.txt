@@ -79,7 +79,20 @@ if(K2_GENERATED_SOURCES)
     target_include_directories(k2_generated PUBLIC "${KESSEN2_GENERATED_DIR}")
     target_link_libraries(k2_generated PUBLIC ps2_runtime)
     k2_add_module(k2_generated ALLOWS ps2_runtime)
-    message(STATUS "k2_generated: ${KESSEN2_GENERATED_DIR}")
+    # ~15k small translation units: batch them (unity build) and precompile the shared
+    # runtime headers, otherwise the build is dominated by re-parsing ps2_runtime.h.
+    # register_functions.cpp (one huge initializer) stays out of the batches.
+    set_target_properties(k2_generated PROPERTIES UNITY_BUILD ON UNITY_BUILD_BATCH_SIZE 64)
+    set_source_files_properties("${KESSEN2_GENERATED_DIR}/register_functions.cpp"
+        PROPERTIES SKIP_UNITY_BUILD_INCLUSION TRUE SKIP_PRECOMPILE_HEADERS TRUE)
+    target_precompile_headers(k2_generated PRIVATE
+        <ps2_runtime_macros.h> <ps2_runtime.h> <ps2_syscalls.h> <ps2_stubs.h> <ps2_log.h> <stdexcept>)
+    if(MSVC)
+        # /MP: MSBuild hands all batches to one cl.exe; let it use every core.
+        target_compile_options(k2_generated PRIVATE /bigobj /FS /MP)
+    endif()
+    list(LENGTH K2_GENERATED_SOURCES _k2_gen_count)
+    message(STATUS "k2_generated: ${_k2_gen_count} sources in ${KESSEN2_GENERATED_DIR}")
 else()
     message(STATUS "k2_generated: no sources in ${KESSEN2_GENERATED_DIR} (target not created)")
 endif()
