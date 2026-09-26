@@ -73,6 +73,9 @@ compile_commands.json
 # --- Runtime logs (PS2Recomp writes guest call traces to the working directory) ---
 ps2_log.txt
 
+# --- Agent chat uploads (pasted screenshots; local only) ---
+.gg/uploads/
+
 # --- Editors / OS ---
 .vs/
 .vscode/
