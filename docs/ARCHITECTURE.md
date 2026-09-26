@@ -39,12 +39,13 @@ flowchart LR
 |---|---|---|
 | `tools/disc/` | `k2_disc_core`, `k2disc` | Extract the ISO, identify boot ELF/IRX, catalogue formats, unpack `LINKDATA.BNS` into `work/` ([disc.md](modules/disc.md)) |
 | `analysis/` | _(data)_ | Human-authored recompiler config / function tables |
+| `tools/recomp/` | _(scripts)_ | Boot ELF + main overlay → combined ELF; run `ps2_recomp` into `generated/` ([recomp.md](modules/recomp.md)) |
 | `generated/` | `k2_generated` (only when sources exist) | `ps2_recomp` output |
 | `external/PS2Recomp/` | `ps2_runtime` | Upstream runtime (git submodule, never edited) |
-| `runtime-ext/` | `k2_runtime_ext` | **All Kessen II–specific runtime logic** (game overrides, syscall/stub bindings, patches) |
+| `runtime-ext/` | `k2_runtime_ext` | **All Kessen II–specific runtime logic**: the `SLUS_202.75` game override (ELF name + entry + CRC32) and its fixes in `src/fixes/`, bound to guest addresses; the override and fixes compile only when generated code is linked; otherwise the library builds empty and `override_count()` returns 0 ([BRINGUP.md](BRINGUP.md)) |
 | `render/` | `k2_render` | Host renderer for GS/VU output |
 | `platform/` | `k2_platform` | Window, input, audio device, timing (SDL3) |
-| `app/` | `kessen2` | Composition root |
+| `app/` | `kessen2` | Composition root. With generated code: boots the ELF on `PS2Runtime` (`src/boot.cpp`; `--headless`, `--frames`, `--timeout-s`, used by the `k2_boot_smoke` test). Without: prints versions only |
 
 Each module README states Purpose / Inputs / Outputs / Allowed dependencies / Forbidden — index in [modules/](modules/README.md).
 

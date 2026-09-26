@@ -19,16 +19,14 @@ Checked **2026-09-26**. Update the date and pins together.
 
 ## Known upstream issues at this pin
 
-- **`ps2_recomp` cannot be built as a subproject.** `ps2xRecomp/CMakeLists.txt` does `include("${CMAKE_SOURCE_DIR}/ps2xRuntime/cmake/ReleaseMode.cmake")`, which only resolves when PS2Recomp is the top-level project. The superbuild therefore sets `PS2X_BUILD_RECOMP=OFF`. Build the tool standalone when needed (Phase 4):
+- **`ps2_recomp` cannot be built as a subproject.** `ps2xRecomp/CMakeLists.txt` does `include("${CMAKE_SOURCE_DIR}/ps2xRuntime/cmake/ReleaseMode.cmake")`, which only resolves when PS2Recomp is the top-level project. The superbuild therefore sets `PS2X_BUILD_RECOMP=OFF`. The tool is built standalone in the same tree as `ps2_analyzer` (configure command below); `tools/recomp/run-recomp.sh` does this automatically if the binary is missing. Verified 2026-09-26 (MSVC 14.44, Release):
 
   ```sh
-  cmake -S external/PS2Recomp -B out/build/ps2recomp -G "Visual Studio 17 2022" -A x64 \
-        -DPS2X_BUILD_RUNTIME=OFF -DPS2X_BUILD_ANALYZER=OFF -DPS2X_BUILD_TEST=OFF -DPS2X_BUILD_STUDIO=OFF
-  cmake --build out/build/ps2recomp --config Release --target ps2_recomp
+  cmake --build out/build/ps2recomp-tools --config Release --target ps2_recomp
+  # -> out/build/ps2recomp-tools/ps2xRecomp/Release/ps2_recomp.exe
   ```
-  _(Not yet verified; do so in Phase 4.)_
 - `FetchContent_Populate` deprecation warnings (CMP0169) from `ps2xRuntime/CMakeLists.txt` — harmless with CMake 4.4.
-- Upstream `ps2EntryRunner` links with `/FORCE:MULTIPLE` for a WinAPI/raylib `CloseWindow` clash. `kessen2` does not need it yet (it references no raylib symbols); revisit when the runtime is actually driven.
+- Upstream `ps2EntryRunner` links with `/FORCE:MULTIPLE` for a WinAPI/raylib `CloseWindow` clash. `kessen2` does the same on MSVC whenever generated code is linked (that is when it drives `PS2Runtime::run()` and pulls raylib in); see `app/CMakeLists.txt`.
 
 - **`ps2_analyzer` standalone build** (used by `analysis/run-analysis.sh`, which runs it automatically if missing):
 
