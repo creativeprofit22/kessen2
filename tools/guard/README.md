@@ -1,6 +1,6 @@
 # tools/guard — keep game data out of git
 
-**Purpose.** Block commits of disc images, ELFs, IRX modules, memory cards, extracted assets, generated code and oversized files; enforce "no generated includes" in `platform/`, `render/` and `runtime-ext/`.
+**Purpose.** Block commits of disc images, ELFs, IRX modules, memory cards, extracted assets, generated code, derived analysis output (`analysis/out/`, `analysis/*.toml`, `analysis/*.csv` — commit policy pending, see `analysis/README.md`) and oversized files; enforce "no generated includes" in `platform/`, `render/` and `runtime-ext/`.
 
 **Inputs.** The git index (`--staged`) or all tracked files (`--all`).
 

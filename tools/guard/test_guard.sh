@@ -54,12 +54,21 @@ mkdir -p runtime-ext/src
 printf '#include "ps2_recompiled_functions.h"\n' > runtime-ext/src/c.cpp
                                                           stage runtime-ext/src/c.cpp; expect fail "generated include in runtime-ext/"
 printf 'x\n' > bios.rom1;                                 stage bios.rom1;   expect fail "BIOS side file"
+mkdir -p analysis; printf 'x = 1\n' > analysis/kessen2.toml; stage analysis/kessen2.toml; expect fail "analysis/*.toml derived output"
+mkdir -p analysis/out/reports; printf 'a,b\n' > analysis/out/reports/x.csv
+                                                          stage analysis/out/reports/x.csv; expect fail "analysis/out/ derived output"
 
 mkdir -p generated platform/src
 printf '# generated\n' > generated/README.md
 printf '# hello\n' > README.md
 printf '#include "k2/platform.h"\n' > platform/src/ok.cpp
 stage generated/README.md README.md platform/src/ok.cpp;                     expect pass "clean files"
+
+mkdir -p analysis/ghidra
+printf '# analysis\n' > analysis/README.md
+printf '#!/bin/sh\n' > analysis/run-analysis.sh
+printf 'class K2Report {}\n' > analysis/ghidra/K2Report.java
+stage analysis/README.md analysis/run-analysis.sh analysis/ghidra/K2Report.java; expect pass "analysis scripts and docs"
 
 if [ "$failures" -ne 0 ]; then
     echo "test_guard: $failures case(s) failed" >&2

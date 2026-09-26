@@ -1,22 +1,24 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Refuse game data, generated code and oversized files in git.
+# Refuse game data, generated code, derived analysis output and oversized files in git.
 #
 #   check-forbidden.sh [--staged]   check files added/modified in the index (pre-commit)
 #   check-forbidden.sh --all        check every file in the index (CI)
 #
 # Checks the *index* contents (what would be committed), not the working tree:
-#   (a) forbidden paths / extensions      (b) content magic: ELF, ISO9660, PS2 memory card
-#   (c) files larger than 20 MB           (d) generated-code includes in platform/, render/,
-#                                             runtime-ext/
+#   (a) forbidden paths / extensions, incl. generated/ and derived analysis output
+#       (analysis/out/, analysis/*.toml, analysis/*.csv; commit policy pending)
+#   (b) content magic: ELF, ISO9660, PS2 memory card
+#   (c) files larger than 20 MB
+#   (d) generated-code includes in platform/, render/, runtime-ext/
 # POSIX sh + git + coreutils only (works in Git for Windows' hook shell and Linux CI).
 set -eu
 
 mode=${1:---staged}
 case "$mode" in
     --staged|--all) ;;
-    -h|--help) sed -n '2,13p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,15p' "$0"; exit 0 ;;
     *) echo "usage: $0 [--staged|--all]" >&2; exit 2 ;;
 esac
 
@@ -65,6 +67,8 @@ while IFS= read -r path; do
     case "$lower" in
         generated/readme.md) ;;
         generated/*) report "$path" "generated code must never be committed" ;;
+        analysis/out/*|analysis/*.toml|analysis/*.csv)
+            report "$path" "derived analysis output (policy pending, see analysis/README.md)" ;;
     esac
 
     # (c) size

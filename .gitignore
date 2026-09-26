@@ -46,6 +46,10 @@ generated/*
 *.gpr
 *.lock
 *.lock~
+# Derived analysis output (commit policy for *.toml/*.csv still pending)
+analysis/out/
+analysis/*.toml
+analysis/*.csv
 
 # --- CMake / C++ build output ---
 build/
