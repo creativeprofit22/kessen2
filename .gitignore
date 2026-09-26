@@ -1,0 +1,56 @@
+# --- Game data: never commit copyrighted disc content ---
+*.iso
+*.bin
+*.cue
+*.img
+*.mdf
+*.mds
+*.nrg
+*.chd
+*.elf
+*.irx
+SLPM_*
+SLUS_*
+SLES_*
+
+# --- Recompiler output (only the README is tracked) ---
+generated/*
+!generated/README.md
+
+# --- Ghidra / analysis artifacts ---
+*.gzf
+*.rep/
+*.gpr
+*.lock
+*.lock~
+
+# --- CMake / C++ build output ---
+build/
+out/
+cmake-build-*/
+CMakeUserPresets.json
+CMakeCache.txt
+CMakeFiles/
+compile_commands.json
+*.obj
+*.o
+*.lib
+*.a
+*.pdb
+*.ilk
+*.exe
+*.dll
+*.so
+*.dylib
+
+# --- Editors / OS ---
+.vs/
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# --- Env / secrets ---
+.env
+.env.*
