@@ -1,9 +1,10 @@
 # Static analysis — Ghidra + PS2Recomp config
 
-One command analyses the boot ELF headlessly (no Ghidra GUI) and produces the TOML config and CSV function map that `ps2_recomp` consumes:
+One command analyses the combined ELF (boot ELF + main code overlay) headlessly (no Ghidra GUI) and produces the TOML config and CSV function map that `ps2_recomp` consumes:
 
 ```sh
-sh analysis/run-analysis.sh      # ~1.5 min after the first run
+sh tools/recomp/make-combined-elf.sh   # once per disc extraction, see recomp.md
+sh analysis/run-analysis.sh            # ~2.5 min after the first run
 ```
 
 All outputs are git-ignored (see [Outputs](#outputs)). Script sources live in [`analysis/`](../../analysis/README.md).
@@ -34,7 +35,7 @@ Environment variables (all optional):
 |---|---|
 | `GHIDRA_INSTALL_DIR` | `E:/Tools/ghidra_12.1.3_PUBLIC` |
 | `K2_JAVA_HOME` | `E:/Tools/jdk-21.0.12.1+1` |
-| `K2_ELF` | `work/disc/SLUS-20275/iso/SLUS_202.75` — boot ELF, relative to the repo root or absolute |
+| `K2_ELF` | `work/recomp/SLUS_202.75.combined.elf` — built by `tools/recomp/make-combined-elf.sh` (boot ELF + the main code overlay, see [recomp.md](recomp.md)); the script fails if it is missing. Relative to the repo root or absolute. Set `K2_ELF=work/disc/SLUS-20275/iso/SLUS_202.75` explicitly to analyse the retail boot ELF alone (the findings below); `run-recomp.sh` then refuses the TOML unless `K2_ALLOW_RETAIL_ELF=1` |
 | `K2_PS2_ANALYZER` | first existing of `out/build/ps2recomp-tools/ps2xAnalyzer/Release/ps2_analyzer(.exe)` (Release/ subdir on multi-config generators) and `out/build/ps2recomp-tools/ps2xAnalyzer/ps2_analyzer` (single-config generators) |
 | `K2_GENERATED_DIR` | `generated` (repo root) — written to the TOML's `[general] output`; set it to the same path as CMake's `KESSEN2_GENERATED_DIR` |
 
@@ -48,6 +49,7 @@ The script refuses to run if the Ghidra version isn't 12.1.3, the EE extension i
    - preScript `K2SetAnalysisOptions.java` pins the options below and dumps all 132 effective options to `reports/analyzer-options.txt`
    - auto-analysis
    - `K2ApplySdkNames.java` applies the SDK names (source `IMPORTED`). It only renames default `FUN_*` functions or creates missing ones, and never overwrites a symbol-table or STABS name.
+   - `K2SplitFarChunks.java` detaches body chunks that Ghidra folded into a function across other functions (a shared `jr $ra` tail-jump target). Without it the exporter's `[entry, max body address]` range turned one 60-byte function into a 160 KB span and a 12 MB C++ function. Log: `reports/split-far-chunks.txt`.
    - `K2Report.java` writes the reports
    - PS2Recomp's `ps2xRecomp/tools/ghidra/ExportPS2Functions.java` (unmodified). Its two `askFile` prompts are answered by script arguments in headless mode.
 3. **Config fix-up.** Rewrites `[general] input`/`output` in the TOML to this checkout's ELF and `generated/`.

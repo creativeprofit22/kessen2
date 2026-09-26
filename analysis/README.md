@@ -4,7 +4,7 @@
 
 **Contents.**
 - `run-analysis.sh` — one-command headless pipeline: SDK signature scan → Ghidra import/analysis → SDK naming → reports → PS2Recomp's `ExportPS2Functions.java`. Usage, setup and findings: [docs/modules/analysis.md](../docs/modules/analysis.md).
-- `ghidra/` — the project's Ghidra scripts (`K2SetAnalysisOptions`, `K2ApplySdkNames`, `K2Report`).
+- `ghidra/` — the project's Ghidra scripts (`K2SetAnalysisOptions`, `K2ApplySdkNames`, `K2SplitFarChunks`, `K2Report`).
 
 **Inputs.** Boot ELF in `work/` (untracked), Ghidra 12.1.3 + ghidra-emotionengine-reloaded v2.1.37, JDK 21 (see `docs/DEPENDENCIES.md`).
 

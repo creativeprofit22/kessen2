@@ -17,8 +17,11 @@
 #   GHIDRA_INSTALL_DIR  Ghidra 12.1.3 with ghidra-emotionengine-reloaded v2.1.37 in
 #                       Ghidra/Extensions  [E:/Tools/ghidra_12.1.3_PUBLIC]
 #   K2_JAVA_HOME        JDK 21             [E:/Tools/jdk-21.0.12.1+1]
-#   K2_ELF              boot ELF, relative to the repo root or absolute
-#                       [work/disc/SLUS-20275/iso/SLUS_202.75]
+#   K2_ELF              ELF to analyse, relative to the repo root or absolute
+#                       [work/recomp/SLUS_202.75.combined.elf, built by
+#                       sh tools/recomp/make-combined-elf.sh; the run fails if it
+#                       is missing. The retail boot ELF (no main overlay, about
+#                       half the game code) is only used when set explicitly.]
 #   K2_PS2_ANALYZER     ps2_analyzer executable  [first existing of
 #                       out/build/ps2recomp-tools/ps2xAnalyzer/Release/ps2_analyzer(.exe)
 #                       (multi-config generators) and
@@ -76,7 +79,14 @@ stage_done() {
 
 GHIDRA_INSTALL_DIR=${GHIDRA_INSTALL_DIR:-E:/Tools/ghidra_12.1.3_PUBLIC}
 K2_JAVA_HOME=${K2_JAVA_HOME:-E:/Tools/jdk-21.0.12.1+1}
-K2_ELF=${K2_ELF:-work/disc/SLUS-20275/iso/SLUS_202.75}
+combined_elf=work/recomp/SLUS_202.75.combined.elf
+if [ -z "${K2_ELF:-}" ]; then
+    # Default to the combined ELF: most game code lives in the overlay at 0x5A4800,
+    # which the retail boot ELF lacks (docs/BRINGUP.md #3).
+    [ -f "$combined_elf" ] \
+        || die "combined ELF not found: $combined_elf (run sh tools/recomp/make-combined-elf.sh first, or set K2_ELF explicitly)"
+    K2_ELF=$combined_elf
+fi
 exe=""
 [ "$windows" = 1 ] && exe=.exe
 K2_PS2_ANALYZER=${K2_PS2_ANALYZER:-}
@@ -205,6 +215,7 @@ n_reports=$(native "$top/$reports")
     -scriptPath "$n_out/scripts" \
     -preScript K2SetAnalysisOptions.java "$n_reports/analyzer-options.txt" \
     -postScript K2ApplySdkNames.java "$n_out/sdk-names.csv" "$n_reports/sdk-naming.txt" \
+    -postScript K2SplitFarChunks.java "$n_reports/split-far-chunks.txt" \
     -postScript K2Report.java "$n_reports" "$n_out/sdk-names.csv" \
     -postScript ExportPS2Functions.java "$(native "$top/$toml")" "$n_out/kessen2_functions.csv" \
     -log "$n_reports/ghidra.log" -scriptlog "$n_reports/scripts.log" \
