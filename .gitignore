@@ -70,6 +70,9 @@ compile_commands.json
 *.so
 *.dylib
 
+# --- Runtime logs (PS2Recomp writes guest call traces to the working directory) ---
+ps2_log.txt
+
 # --- Editors / OS ---
 .vs/
 .vscode/
