@@ -1,0 +1,4 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Installed by tools/guard/install-hooks.sh. Blocks game data / generated code commits.
+exec sh "$(git rev-parse --show-toplevel)/tools/guard/check-forbidden.sh" --staged

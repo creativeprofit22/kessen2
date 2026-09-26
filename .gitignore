@@ -12,6 +12,29 @@
 SLPM_*
 SLUS_*
 SLES_*
+*.cso
+*.ELF
+*.IRX
+SLPS_*
+SCUS_*
+SCES_*
+SCPS_*
+# PS2 BIOS / firmware
+*.rom0
+*.rom1
+*.rom2
+*.erom
+*.nvm
+*.mec
+# PS2 memory cards / save data
+*.mc2
+*.ps2
+# Extracted / working copies of disc content
+work/
+extracted/
+dump/
+dumps/
+assets_dumped/
 
 # --- Recompiler output (only the README is tracked) ---
 generated/*

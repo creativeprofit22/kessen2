@@ -1,0 +1,21 @@
+name: Guard
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  forbidden-content:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Reject game data, generated code and oversized files
+        run: sh tools/guard/check-forbidden.sh --all
+      - name: Guard self-test
+        run: sh tools/guard/test_guard.sh
