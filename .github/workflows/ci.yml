@@ -39,7 +39,8 @@ jobs:
           -P tests/cmake/run_dep_violation.cmake
 
   build-windows:
-    runs-on: windows-latest
+    # windows-latest ships VS 2026 since June 2026; the msvc-x64 preset targets VS 2022.
+    runs-on: windows-2022
     # First build fetches SDL3, raylib, imgui and a FFmpeg prebuilt.
     timeout-minutes: 45
     steps:
