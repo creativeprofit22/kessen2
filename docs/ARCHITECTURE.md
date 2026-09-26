@@ -37,7 +37,7 @@ flowchart LR
 
 | Directory | Target | Role |
 |---|---|---|
-| `tools/disc/` | _(none yet)_ | Extract the boot ELF etc. from the user's disc into `work/` |
+| `tools/disc/` | `k2_disc_core`, `k2disc` | Extract the ISO, identify boot ELF/IRX, catalogue formats, unpack `LINKDATA.BNS` into `work/` ([disc.md](modules/disc.md)) |
 | `analysis/` | _(data)_ | Human-authored recompiler config / function tables |
 | `generated/` | `k2_generated` (only when sources exist) | `ps2_recomp` output |
 | `external/PS2Recomp/` | `ps2_runtime` | Upstream runtime (git submodule, never edited) |
