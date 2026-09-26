@@ -10,6 +10,29 @@ add_test(NAME k2_dep_rule_negative
 # k2disc unit tests (synthetic in-memory fixtures only).
 add_subdirectory("${CMAKE_SOURCE_DIR}/tools/disc/tests" disc)
 
+# Headless boot smoke test: local only, needs recompiled code and the user's own game files
+# (neither exists in CI). Run alone with: ctest --preset msvc-x64 -L boot
+set(K2_BOOT_ELF "${CMAKE_SOURCE_DIR}/work/disc/SLUS-20275/iso/SLUS_202.75" CACHE FILEPATH
+    "Boot ELF used by the k2_boot_smoke test")
+# The main overlay load is first printed between frames 500 and 525 (Debug build); 900 leaves
+# margin. The driver script also requires the boot milestone lines, see run_boot_smoke.cmake.
+set(K2_BOOT_SMOKE_FRAMES 900 CACHE STRING "Frames k2_boot_smoke must present")
+if(TARGET k2_generated AND EXISTS "${K2_BOOT_ELF}")
+    add_test(NAME k2_boot_smoke
+        COMMAND "${CMAKE_COMMAND}"
+            "-DKESSEN2_EXE=$<TARGET_FILE:kessen2>"
+            "-DBOOT_ELF=${K2_BOOT_ELF}"
+            "-DFRAMES=${K2_BOOT_SMOKE_FRAMES}"
+            "-DTIMEOUT_S=120"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/run_boot_smoke.cmake")
+    set_tests_properties(k2_boot_smoke PROPERTIES
+        LABELS boot
+        TIMEOUT 180)
+    message(STATUS "k2_boot_smoke: registered (${K2_BOOT_ELF})")
+else()
+    message(STATUS "k2_boot_smoke: skipped (needs generated code and ${K2_BOOT_ELF})")
+endif()
+
 # Git guardrail self-test (needs a POSIX sh; on Windows use Git for Windows' sh, not WSL).
 find_package(Git QUIET)
 set(_k2_sh_hints "")
