@@ -1,0 +1,15 @@
+diff --git a/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp b/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp
+index c5e31c4..2880ac7 100644
+--- a/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp
++++ b/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp
+@@ -1894,7 +1894,9 @@ void EeScheduler::processEvent(const EeEvent &event)
+             GuestInvocation invocation{};
+             invocation.kind = GuestInvocationKind::GsCallback;
+             invocation.context.pc = m_gsVSyncCallback;
+-            SET_GPR_U32(&invocation.context, 4, static_cast<uint32_t>(m_vsyncTick));
++            // libgraph installs the callback as the INTC VBLANK_S handler, so on hardware
++            // it receives the interrupt cause (INTC_VBLANK_S = 2), not a tick count.
++            SET_GPR_U32(&invocation.context, 4, 2u);
+             SET_GPR_U32(&invocation.context, 28, m_gsVSyncCallbackGp);
+             SET_GPR_U32(&invocation.context, 29, m_gsVSyncCallbackSp);
+             SET_GPR_U32(&invocation.context, 31, 0u);
