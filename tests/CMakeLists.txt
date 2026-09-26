@@ -7,6 +7,9 @@ add_test(NAME k2_dep_rule_negative
         "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/dep_violation"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/run_dep_violation.cmake")
 
+# k2disc unit tests (synthetic in-memory fixtures only).
+add_subdirectory("${CMAKE_SOURCE_DIR}/tools/disc/tests" disc)
+
 # Git guardrail self-test (needs a POSIX sh; on Windows use Git for Windows' sh, not WSL).
 find_package(Git QUIET)
 set(_k2_sh_hints "")
