@@ -5,7 +5,17 @@
 #include "k2/render.h"
 #include "k2/runtime_ext.h"
 
+#if K2_HAS_GENERATED
+#include "boot.h"
+#endif
+
+#include <charconv>
+#include <cstdint>
 #include <cstdio>
+#include <cstdlib>
+#include <filesystem>
+#include <optional>
+#include <string>
 #include <string_view>
 
 #ifndef K2_VERSION
@@ -13,6 +23,9 @@
 #endif
 
 namespace {
+
+// Where tools/disc/extract.sh puts the retail boot ELF, relative to the repository root.
+constexpr std::string_view kDefaultElf = "work/disc/SLUS-20275/iso/SLUS_202.75";
 
 void print_version()
 {
@@ -27,9 +40,66 @@ void print_version()
 
 void print_usage()
 {
-    std::printf("usage: kessen2 [--version | --help]\n"
-                "Phase 1 scaffold: game boot is not implemented yet.\n");
+    std::printf("usage: kessen2 [--version | --help]\n");
+#if K2_HAS_GENERATED
+    std::printf("       kessen2 [--elf <path>] [--headless] [--frames N] [--timeout-s S]\n"
+                "  --elf        boot ELF (default: %.*s, relative to the working directory)\n"
+                "  --headless   hidden window; stop on the first missing guest function\n"
+                "  --frames N   exit 0 after N presented frames (3 if the guest stops first)\n"
+                "  --timeout-s S  exit 4 if S seconds pass first\n",
+                static_cast<int>(kDefaultElf.size()), kDefaultElf.data());
+#else
+    std::printf("No recompiled game code in this build (run tools/recomp/run-recomp.sh and reconfigure).\n");
+#endif
 }
+
+#if K2_HAS_GENERATED
+std::optional<std::uint32_t> parse_u32(std::string_view text)
+{
+    std::uint32_t value = 0;
+    const auto [end, ec] = std::from_chars(text.data(), text.data() + text.size(), value);
+    if (ec != std::errc{} || end != text.data() + text.size()) {
+        return std::nullopt;
+    }
+    return value;
+}
+
+// Fills `out`; returns 0, or 2 for a usage error.
+int parse_boot_args(int argc, char **argv, k2::app::BootOptions &out)
+{
+    for (int i = 1; i < argc; ++i) {
+        const std::string_view arg = argv[i];
+        const bool has_value = i + 1 < argc;
+        if (arg == "--headless") {
+            out.headless = true;
+        } else if (arg == "--elf" && has_value) {
+            out.elf_path = argv[++i];
+        } else if ((arg == "--frames" || arg == "--timeout-s") && has_value) {
+            const auto value = parse_u32(argv[++i]);
+            if (!value) {
+                std::fprintf(stderr, "kessen2: %s expects a non-negative integer, got '%s'\n",
+                             argv[i - 1], argv[i]);
+                return 2;
+            }
+            (arg == "--frames" ? out.frames : out.timeout_s) = *value;
+        } else {
+            std::fprintf(stderr, "kessen2: unknown or incomplete argument '%s'\n", argv[i]);
+            print_usage();
+            return 2;
+        }
+    }
+    if (out.elf_path.empty()) {
+        std::error_code ec;
+        if (!std::filesystem::is_regular_file(std::filesystem::path(kDefaultElf), ec)) {
+            std::fprintf(stderr, "kessen2: no boot ELF at %.*s; pass --elf <path>\n",
+                         static_cast<int>(kDefaultElf.size()), kDefaultElf.data());
+            return 2;
+        }
+        out.elf_path = std::string(kDefaultElf);
+    }
+    return 0;
+}
+#endif
 
 } // namespace
 
@@ -44,12 +114,24 @@ int main(int argc, char **argv)
         print_usage();
         return 0;
     }
+
+#if K2_HAS_GENERATED
+    k2::app::BootOptions options;
+    if (const int rc = parse_boot_args(argc, argv, options); rc != 0) {
+        return rc;
+    }
+    // PS2Recomp's runtime owns the window (raylib) for now; SDL platform init is not used on
+    // this path. Exit like upstream's runner: skip static/runtime teardown.
+    const int rc = k2::app::boot(options);
+    std::fflush(stdout);
+    std::fflush(stderr);
+    std::_Exit(rc);
+#else
     if (!arg.empty()) {
         std::fprintf(stderr, "kessen2: unknown argument '%s'\n", argv[1]);
         print_usage();
         return 2;
     }
-
     if (!k2::platform::init()) {
         std::fprintf(stderr, "kessen2: platform init failed: %s\n", k2::platform::last_error().c_str());
         return 1;
@@ -57,4 +139,5 @@ int main(int argc, char **argv)
     print_usage();
     k2::platform::shutdown();
     return 0;
+#endif
 }
