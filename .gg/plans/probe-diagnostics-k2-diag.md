@@ -1,0 +1,128 @@
+# Plan: probe diagnostics module (k2_diag) + reverse watchpoint
+
+Roadmap phase `0aa3a4c8…` — status `planning`, no saved progress. Repo clean at `f49841b`.
+
+## Gate (read first)
+
+The phase prompt says to do this **after BRINGUP blocker #11 is fixed**. Right now #11 is still `open`, and the engine build copy holds 4 hand-edited `[K2DIAG]` blocks that belong to the #11 investigation:
+- `out/build/msvc-x64/_deps/ps2recomp-patched/src/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.cpp:2494` (decoded-frame PPM dump)
+- `…/src/lib/gs/gs_cpu_backend.cpp:1867` (VRAM dumps), `:1962` (output/CRTC dumps)
+- `…/src/lib/gs/gs_frontend.cpp:1386` (GS transfer log)
+
+Adding patch `0011` to `series` changes the configure stamp, and configure then **re-exports a clean tree and wipes these edits**. So step 1 starts only once #11 is fixed or the user explicitly overrides. Either way, step 2 saves the edits to an untracked diff before anything touches the build tree.
+
+## What exists today (inspected)
+
+| Diagnostic | Where | Mechanism |
+|---|---|---|
+| `K2_TRACE_FUNCS` / `_WORD` / `_ARM` / `_NONZERO` | `runtime-ext/src/fixes/trace_funcs.cpp` | `lookupFunction` + `replaceFunction` with 8 template wrapper slots; applied last in `fixes::apply_all` |
+| `K2_TRACE_CD` | `runtime-ext/src/fixes/cd_overlay_guard.cpp` | log line inside the `sceCdRead` wrapper at `0x114F40` |
+| `K2_WATCH` / `_EVERY`, `K2_SCREENSHOT_EVERY` | `app/src/boot.cpp` (`parse_watch_list`, `on_frame`) | `setDebugUiCallbacks` frame callback on the render thread; raylib `TakeScreenshot` |
+| `PS2X_IOP_TRACE*` | `patches/ps2recomp/0002-iop-trace.patch` | engine-level, **out of scope** (stays as is) |
+
+The bad inputs these accept fail open: a malformed address is "ignored", and extra entries are silently dropped.
+
+Engine facts (pin `75d729ce`, identical at upstream `c5a9d025`):
+- `PS2Runtime::replaceFunction/registerFunction/lookupFunction/hasFunction` index one global per-address table.
+- Every JAL/JALR/JR to another function goes through `PS2Runtime::dispatchGuestBranch` (`ps2_runtime.cpp:1397-1399`, `targetFn(rdram, ctx, this)`). The scheduler enters through `EeScheduler.cpp:288-299` (`function(m_rdram, &context, &m_runtime)`). Only static `J` tail jumps to a named function call it directly, so they bypass both paths (`control_flow_emitter.cpp:210-225`).
+- There is a single executor thread for guest code. The frame callback runs on the render thread.
+- Patch `0007` makes EE events follow host time, so runs are **close to deterministic but not exactly**. Elapsed time is pinned at about 60 fps, which means wall time cannot measure hook overhead; CPU time can.
+
+## Design
+
+### Module `diag/` → target `k2_diag` (game-agnostic, C++23 like ADR-0005 for `std::expected`)
+
+**Pure part, always built.** Tested in CI and contains no PS2Recomp headers:
+- `include/k2/diag/probe_spec.h`, `src/probe_spec.cpp`: `Limits`, `ProbeSpec`, `parse_probe_spec(std::string_view) -> std::expected<ProbeSpec, SpecError{line, message}>`, `load_probe_file(path)` (size cap 64 KiB, fails closed).
+- `include/k2/diag/write_attribution.h`, `src/write_attribution.cpp`: `WriteAttributor`. It holds the ranges and a shadow copy, keeps a per-context call stack (keyed by an opaque context id, depth capped at 256, resyncs on overflow or a missing exit), and provides `on_edge(edge, ctxId, targetPc, sourcePc, std::span<const uint8_t> ram)` that emits `WriteEvent{addr, old, new, writerFn, site}`. On Enter(T) a change is attributed to the caller (the stack top), with `site = sourcePc`. On Exit(T) it is attributed to T. With an empty stack it is reported as `writer=unattributed`. Event count is bounded, and a `truncated` line is written once.
+- `include/k2/diag/probe_log.h`, `src/probe_log.cpp`: `ProbeLog` writes to a file or stderr behind a mutex, with a global `seq`. Every line is `frame=F seq=N kind=K key=value…`. Watch rows and the final summary are sorted by address.
+
+**Runtime binding.** Compiled only `if(TARGET ps2_runtime AND TARGET k2_generated)`, the same rule as `k2_runtime_ext`:
+- `include/k2/diag/probe_session.h`, `src/probe_session.cpp`, `src/func_probes.cpp`: `ProbeSession::install(PS2Runtime&, const ProbeSpec&, ProbeLog&) -> std::expected<…>`. It fails closed if a `func` address has no recompiled function. It wraps functions with 16 template slots (generalising `trace_funcs.cpp`), then sets the dispatch observer only if the spec has `attrib` lines. `on_presented_frame(PS2Runtime&, n) -> FrameActions{screenshot}` stores the frame atomically and prints due watches. `finish()` writes the sorted summary.
+- No raylib: the app takes the screenshot when `FrameActions.screenshot` is set.
+
+CMake: `k2_add_module(k2_diag ALLOWS ps2_runtime)`. `k2_runtime_ext` gets `ALLOWS ps2_runtime k2_diag` (it is allowed to link it but does not need to now). The app links it and adds it to `_k2_app_allows`. Platform, render and generated stay forbidden from linking it, which deny-by-default already enforces.
+
+### Probe spec v1 (plain text, `#` comments, one directive per line)
+
+```
+k2probe 1                                  # required first directive
+func 0x1b6670 calls=64 nonzero=256 word=0x11ef480   # entry: a0-a3 ra gp sp [word]; return: pc v0 [word]
+arm 0x1085d0 after=2                       # log nothing until this func's N-th call (must be a func)
+watch 0x1113320:4 every=600                # print words every N presented frames
+attrib 0x1595:34                           # write attribution, function granularity
+attrib-max-events 100000
+screenshot every=150 from=0
+```
+
+Limits are fail-closed, and any violation is an error naming the line with a non-zero exit:
+- Hex only. Addresses are EE RDRAM `0x00000000-0x01FFFFFF`; `func` addresses are 4-aligned; `watch` LEN is a multiple of 4 and at most 64.
+- Up to 16 `func`, `calls` ≤ 1024, `nonzero` ≤ 4096, one `arm`.
+- Up to 16 `watch` ranges / 256 bytes; up to 16 `attrib` ranges / 4096 bytes (DKC1 numbers); `attrib-max-events` ≤ 1,000,000; `every` ≥ 1.
+- No overlapping ranges within a kind. Duplicate funcs, unknown directives/options, a missing or wrong version, and trailing junk are all errors.
+- The app reads `K2_PROBE=path` and `K2_PROBE_LOG=path` (default stderr, prefix `[k2probe] `). A bad spec makes it exit with new code `kBootProbeInvalid = 5` before the runtime is created. If an address is missing at install, it exits with the same code.
+
+### Generic engine patch `patches/ps2recomp/0011-dispatch-observer.patch`
+
+- `ps2_runtime.h`: `enum class DispatchEdge : uint8_t { Enter, Exit }`, `using DispatchObserver = void (*)(void *user, DispatchEdge, uint32_t targetPc, uint32_t sourcePc, R5900Context *ctx)`, `setDispatchObserver(observer, user)` (set before `run()`), plus two members.
+- `ps2_runtime.cpp` `dispatchGuestBranch` and `EeScheduler.cpp` run loop: `if (observer != nullptr) [[unlikely]]` Enter before the call and Exit after it. If the function throws, no Exit is sent; the attributor tolerates that.
+- No behaviour change when unset; nothing in it is specific to Kessen. It is made in `work/ps2recomp-scratch` on top of 0001–0010 and added to `series`.
+
+Function probes need **no** engine change because they wrap through `replaceFunction`, so they cost nothing when no probe is loaded.
+
+### Reverse query `tools/probe/reverse_watch.py`
+
+`--exe --elf --address ADDR[:LEN] --before-frame F [--frames N≤5000, default min(F+120,5000)] [--work out/probe] [--context 6] [--repeat N] [--log existing.log] [--self-test]`
+
+The script validates ADDR with the same grammar as the C++ limits. It writes `out/probe/reverse.probe` (`k2probe 1` + `attrib`), runs `kessen2 --headless --frames N` with `K2_PROBE`/`K2_PROBE_LOG`, then prints the last write to each byte at or before frame F with the writer function, call site, old/new values, surrounding events and an attributed/unattributed count. `--repeat 2` runs twice and reports whether the answers agree, which is the honest check given 0007's host timing. `--self-test` runs table-driven checks of the validator and the answering logic on a synthetic log.
+
+### Legacy env vars: removed, not emulated
+
+Delete `trace_funcs.cpp`, the `K2_TRACE_CD` gate, and the `K2_WATCH*` / `K2_SCREENSHOT_EVERY` parsing. BRINGUP.md gets a table mapping each old variable to its probe directive. The cleaner surface outweighs the cost of keeping two systems in sync.
+
+## Risks / limits (go into the ADR)
+
+- Attribution is at function granularity only. Static `J` tail calls fold into the caller, and HLE stubs and syscalls count as their caller. Writes from IOP/DMA land in whatever interval was running.
+- Determinism is approximate (0007), and frame tags come from the render thread. `--repeat` exists for that reason.
+- C++23 for `k2_diag` with PS2Recomp headers: if they fail to compile under `/std:c++latest`, fall back to C++20 with a local `Result` type. Decide at step 6 from the actual build.
+- Overhead: one predictable null check per dispatch. Measured as process CPU time over 5,000 Release headless frames, 3 runs before and 3 after 0011 with no probe. The target is within run-to-run spread; if it is outside, report it rather than hide it.
+
+## Verification
+
+- `ctest --preset msvc-x64` covers the new `k2diag_test_probe_spec`, `k2diag_test_write_attribution`, `k2_probe_tool_selftest`, the extended `k2_dep_rule_negative`, `k2_guard`, `k2_boot_smoke`, and a new local `k2_probe_smoke` (label `boot`).
+- `sh tools/guard/check-forbidden.sh --all` passes.
+- The CI `check` job's patch-apply loop covers 0011.
+- Reproduce BRINGUP #8–#11 evidence from `probes/*.probe` at ≤ 5,000 frames.
+- Run a reverse query on the movie frame counter `0x1113320:4`.
+
+## Sources
+
+- DKC1Recomp reverse watch (the source of the range grammar and limits — 16 ranges / 4 KB / no overlaps — and of function-granularity "who last wrote before frame F"): https://github.com/elliotttate/DKC1Recomp/blob/3eb9a10c49cb210df2bd63addafe2a78cf9f4e22/tools/reverse_watch.py#L1-L60
+- DKC1Recomp strict trace-PC env validation (the source of the fail-closed exit): https://github.com/elliotttate/DKC1Recomp/blob/3eb9a10c49cb210df2bd63addafe2a78cf9f4e22/runner/headless_main.c#L238-L246
+- PS2Recomp function-table API used for function probes: https://github.com/ran-j/PS2Recomp/blob/c5a9d02573410a2085a4b4b831b0b68ba3515440/ps2xRuntime/include/ps2_runtime.h#L337-L343
+- PS2Recomp dispatch hot paths hooked by patch 0011: https://github.com/ran-j/PS2Recomp/blob/c5a9d02573410a2085a4b4b831b0b68ba3515440/ps2xRuntime/src/lib/ps2_runtime.cpp#L1397-L1399 and https://github.com/ran-j/PS2Recomp/blob/c5a9d02573410a2085a4b4b831b0b68ba3515440/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp#L286-L299
+
+## Steps
+
+1. Confirm BRINGUP #11 is marked fixed (or that the user explicitly approved going ahead with it open); report roadmap `in-progress` with the current revision.
+2. Save the current hand edits in the engine build copy to `work/k2diag-snapshot.diff` (diff `out/build/msvc-x64/_deps/ps2recomp-patched/src` against a fresh `git archive` export of the pin with `series` applied), without modifying the build tree.
+3. `git -C external/PS2Recomp fetch origin`; record pin `75d729ce` vs `origin/main` HEAD; check that existing `series` and the future 0011 contexts (`dispatchGuestBranch`, `EeScheduler` run loop, `ps2_runtime.h` function-table block) are unchanged upstream.
+4. Measure the baseline: Release build (`cmake --build --preset msvc-x64-release -- /m:1 /nodeReuse:false`), 3× `kessen2 --headless --frames 5000` with no diagnostics env; capture process CPU time via PowerShell `Start-Process -PassThru -Wait` → `TotalProcessorTime`, plus the `boot: result=` line.
+5. Write `docs/adr/0006-probe-diagnostics.md` (TEMPLATE format): spec grammar + limits, the hook mechanisms (function-table wrapping + dispatch observer), cost when disabled, attribution semantics and limits, approximate determinism, and why it is modelled on DKC1Recomp `tools/reverse_watch.py` + `runner/headless_main.c` `DKC1_TRACE_PC` rather than ad-hoc env vars, citing commits `elliotttate/DKC1Recomp@3eb9a10c` and `ran-j/PS2Recomp@c5a9d025`/pin `75d729ce`.
+6. Create `diag/` with `CMakeLists.txt` (pure sources always; binding sources + `ps2_runtime` link only when `ps2_runtime` and `k2_generated` exist; `k2_add_module(k2_diag ALLOWS ps2_runtime)`), `README.md` (Purpose/Inputs/Outputs/Allowed/Forbidden), and add `add_subdirectory(diag)` in the root `CMakeLists.txt` before `runtime-ext`.
+7. Implement `probe_spec.h/.cpp` (parser, limits, `load_probe_file`) and `diag/tests/test_probe_spec.cpp`, with table-driven valid and malformed synthetic specs (bad hex, out of range, misaligned, over-limit counts/bytes, overlaps, duplicates, unknown directive/option, missing version, arm on a non-func); register the tests from `tests/CMakeLists.txt` as `k2diag_*`.
+8. Implement `write_attribution.h/.cpp` and `probe_log.h/.cpp`, plus `diag/tests/test_write_attribution.cpp` (synthetic RAM buffer: enter/exit attribution, `site`, unattributed on empty stack, missing-exit resync, event cap + truncated line, sorted summary).
+9. Create `patches/ps2recomp/0011-dispatch-observer.patch` in `work/ps2recomp-scratch` on top of 0001–0010, add it to `series`, and add its row to `patches/ps2recomp/README.md`; reconfigure and confirm the series applies.
+10. Implement the runtime binding `probe_session.h/.cpp` + `func_probes.cpp` (16 wrapper slots with calls/nonzero/word/arm semantics, watch printing, screenshot scheduling, dispatch observer → `WriteAttributor`, sorted summary at `finish()`).
+11. Wire the app: link `k2_diag` in `app/CMakeLists.txt`; in `app/src/boot.cpp` read `K2_PROBE`/`K2_PROBE_LOG`, parse before creating the runtime (exit `kBootProbeInvalid` = 5, added to `boot.h`), install after `loadELF`, drive `on_presented_frame` from `on_frame` (raylib screenshot stays in the app), and call `finish()` after `run()`; in `main.cpp`, reject `K2_PROBE` when built without generated code.
+12. Remove legacy diagnostics: delete `runtime-ext/src/fixes/trace_funcs.cpp` and its `fixes.h`/`apply_all.cpp` entries, remove the `K2_TRACE_CD` gate from `cd_overlay_guard.cpp`, remove `K2_WATCH*`/`K2_SCREENSHOT_EVERY` from `boot.cpp`, add `k2_diag` to `k2_runtime_ext`'s ALLOWS, and update `tests/cmake/run_boot_smoke.cmake` to unset `K2_PROBE`/`K2_PROBE_LOG` instead of the old variables.
+13. Extend `tests/cmake/dep_violation/CMakeLists.txt` with a `k2_diag` model (ALLOWS `ps2_runtime`) and a `diag` mode where `k2_render` links `k2_diag`; add `diag` to the mode list in `tests/cmake/run_dep_violation.cmake`.
+14. Write `tools/probe/reverse_watch.py` (validator mirroring the C++ limits, run + parse + answer, `--log`, `--repeat`, `--self-test`) and register `k2_probe_tool_selftest` in `tests/CMakeLists.txt` when Python 3 is found.
+15. Add the guard: in `tools/guard/check-forbidden.sh`, reject the marker (built from split strings, case-insensitive) in tracked code/patch/CMake/script files (`*.md` and `tools/guard/*` exempt) and anywhere under `out/build/*/_deps/ps2recomp-patched/src` when present; add fail/pass cases to `tools/guard/test_guard.sh`.
+16. Add the no-temporary-engine-edits rule to `AGENTS.md` and `patches/ps2recomp/README.md` (use a probe or a numbered patch).
+17. Commit-ready probe files: `probes/README.md`, `probes/bringup-08-movie-vblank.probe`, `probes/bringup-09-mpeg-nodata.probe`, `probes/bringup-10-mpeg-create-status.probe`, `probes/bringup-11-movie-display.probe` (≤ 5,000-frame evidence), `probes/cd-reads.probe` (replaces `K2_TRACE_CD`), and `probes/smoke.probe`; add local `k2_probe_smoke` (label `boot`) to `tests/CMakeLists.txt`.
+18. Build Debug and Release; run `ctest --preset msvc-x64`, fix failures, then run `sh tools/guard/check-forbidden.sh --all`.
+19. Measure overhead after 0011 (3× 5,000-frame Release headless runs, no probe, same CPU-time method as step 4) and record both sets in the ADR and in the BRINGUP diagnostics section.
+20. Run each `probes/bringup-*.probe` (≤ 5,000 frames, Release headless) and check the output against BRINGUP rows #8–#11; run `tools/probe/reverse_watch.py --address 1113320:4 --before-frame 1200 --repeat 2` and keep the answer as evidence.
+21. Update docs: rewrite the `docs/BRINGUP.md` diagnostics table for probes (including the old-variable mapping) and add the probe file to rows #8–#11; add `diag/` to the module and dependency tables in `docs/ARCHITECTURE.md`; add the pin vs upstream comparison and the date checked to `docs/DEPENDENCIES.md`, noting whether 0011 applies on both `75d729ce` and upstream HEAD (apply it to a `git archive` of each).
+22. Review the full diff against every doneWhen criterion, rerun `ctest --preset msvc-x64` and the guard, then report roadmap `done` with evidence (no commit unless the user asks).
