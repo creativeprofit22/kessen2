@@ -17,6 +17,10 @@ Checked **2026-09-26**. Update the date and pins together.
 | CMake | ≥ 3.21 (tested 4.4.2) | BSD-3-Clause | Build tool | |
 | MSVC | 14.44.35207 (VS 2022 Build Tools 17.14), generator `Visual Studio 17 2022` | Proprietary | Toolchain | Ninja not assumed |
 
+## Pin vs upstream
+
+Checked **2026-10-04**: pin `75d729ce` vs `ran-j/PS2Recomp` `main` HEAD `c5a9d02573410a2085a4b4b831b0b68ba3515440`. Upstream is one commit ahead and it changes only the README; `ps2xRuntime/` (including `ps2_runtime.h`, `ps2_runtime.cpp` `dispatchGuestBranch` and the `EeScheduler.cpp` run loop that `0011-dispatch-observer.patch` touches) is identical. The full `series` (0002–0011) applies in order to a `git archive` export of both commits. The pin is kept; no runtime change upstream is worth a bump.
+
 ## Known upstream issues at this pin
 
 - **`ps2_recomp` cannot be built as a subproject.** `ps2xRecomp/CMakeLists.txt` does `include("${CMAKE_SOURCE_DIR}/ps2xRuntime/cmake/ReleaseMode.cmake")`, which only resolves when PS2Recomp is the top-level project. The superbuild therefore sets `PS2X_BUILD_RECOMP=OFF`. The tool is built standalone in the same tree as `ps2_analyzer` (configure command below); `tools/recomp/run-recomp.sh` does this automatically if the binary is missing. Verified 2026-09-26 (MSVC 14.44, Release):

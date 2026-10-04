@@ -1,0 +1,85 @@
+diff --git a/ps2xRuntime/include/ps2_runtime.h b/ps2xRuntime/include/ps2_runtime.h
+index 38c55f5..a7bbd0f 100644
+--- a/ps2xRuntime/include/ps2_runtime.h
++++ b/ps2xRuntime/include/ps2_runtime.h
+@@ -333,6 +333,26 @@ public:
+         SkipCallDebug = 3,
+     };
+ 
++    // Optional observer of guest function dispatch (diagnostics). Called on the guest executor
++    // thread with Enter before and Exit after every call made through dispatchGuestBranch and
++    // every function the EE scheduler enters. No Exit is reported if the function throws.
++    // Static J tail jumps that call the target directly are not observed. Set before run();
++    // when unset (default) dispatch costs one null-pointer test.
++    enum class DispatchEdge : uint8_t
++    {
++        Enter,
++        Exit,
++    };
++    using DispatchObserver = void (*)(void *user, DispatchEdge edge, uint32_t targetPc, uint32_t sourcePc,
++                                      R5900Context *ctx);
++    void setDispatchObserver(DispatchObserver observer, void *user)
++    {
++        m_dispatchObserverUser = user;
++        m_dispatchObserver = observer;
++    }
++    [[nodiscard]] DispatchObserver dispatchObserver() const { return m_dispatchObserver; }
++    [[nodiscard]] void *dispatchObserverUser() const { return m_dispatchObserverUser; }
++
+     bool replaceFunction(uint32_t address, RecompiledFunction func);
+     // TODO remove this later need to update all tests
+     bool registerFunction(uint32_t address, RecompiledFunction func);
+@@ -530,6 +550,8 @@ private:
+     DebugUiCallback m_debugUiShutdownCallback = nullptr;
+     void *m_debugUiUserData = nullptr;
+     bool m_debugUiInitialized = false;
++    DispatchObserver m_dispatchObserver = nullptr;
++    void *m_dispatchObserverUser = nullptr;
+ 
+ public:
+     std::atomic<uint32_t> m_debugPc{0};
+diff --git a/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp b/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp
+index b1e46d8..fdb587e 100644
+--- a/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp
++++ b/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp
+@@ -296,7 +296,17 @@ void EeScheduler::run()
+         {
+             m_insideInterrupt = !running->invocations.empty() && running->invocations.back().kind == GuestInvocationKind::Interrupt;
+             m_guestExecuting.store(true, std::memory_order_release);
+-            function(m_rdram, &context, &m_runtime);
++            if (const auto observer = m_runtime.dispatchObserver(); observer != nullptr) [[unlikely]]
++            {
++                const uint32_t entryPc = context.pc;
++                observer(m_runtime.dispatchObserverUser(), PS2Runtime::DispatchEdge::Enter, entryPc, 0u, &context);
++                function(m_rdram, &context, &m_runtime);
++                observer(m_runtime.dispatchObserverUser(), PS2Runtime::DispatchEdge::Exit, entryPc, 0u, &context);
++            }
++            else
++            {
++                function(m_rdram, &context, &m_runtime);
++            }
+             m_guestExecuting.store(false, std::memory_order_release);
+             m_insideInterrupt = false;
+         }
+diff --git a/ps2xRuntime/src/lib/ps2_runtime.cpp b/ps2xRuntime/src/lib/ps2_runtime.cpp
+index 936f02f..9698f33 100644
+--- a/ps2xRuntime/src/lib/ps2_runtime.cpp
++++ b/ps2xRuntime/src/lib/ps2_runtime.cpp
+@@ -1405,7 +1405,16 @@ bool PS2Runtime::dispatchGuestBranch(uint8_t *rdram,
+ 
+     RecompiledFunction targetFn = lookupFunction(targetPc);
+     const uint32_t entryPc = ctx->pc;
+-    targetFn(rdram, ctx, this);
++    if (m_dispatchObserver != nullptr) [[unlikely]]
++    {
++        m_dispatchObserver(m_dispatchObserverUser, DispatchEdge::Enter, targetPc, sourcePc, ctx);
++        targetFn(rdram, ctx, this);
++        m_dispatchObserver(m_dispatchObserverUser, DispatchEdge::Exit, targetPc, sourcePc, ctx);
++    }
++    else
++    {
++        targetFn(rdram, ctx, this);
++    }
+ 
+     if (isStopRequested() || ctx->pc == 0u)
+     {

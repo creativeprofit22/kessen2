@@ -10,3 +10,4 @@
 0008-ipu-to-dma-drains.patch
 0009-mpeg-nodata-callback.patch
 0010-mpeg-create-resets-status.patch
+0011-dispatch-observer.patch
