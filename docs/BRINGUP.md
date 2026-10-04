@@ -56,9 +56,15 @@ Fix preference: real implementation (runtime-ext binding or generic upstream pat
 
 ## Diagnostics
 
-Both are off unless the environment variable is set; neither changes behaviour.
+All are off unless the environment variable is set; none changes behaviour.
 
 | Variable | Effect |
 |---|---|
 | `K2_TRACE_CD=1` | logs every `sceCdRead` (LSN, sectors, destination, caller) |
-| `K2_TRACE_FUNCS=0xADDR[,…]` | wraps up to 8 recompiled functions and logs their first 64 calls (`a0`–`a2`, `ra`, `gp`, `sp`) and returns (`pc`, `v0`) |
+| `K2_TRACE_FUNCS=0xADDR[,…]` | wraps up to 8 recompiled functions and logs their first 64 calls (`a0`–`a2`, `ra`, `gp`, `sp`) and returns (`pc`, `v0`), then `calls=N` at each power-of-two call count |
+| `K2_WATCH=0xADDR[,…]` | prints up to 8 aligned 32-bit guest RAM words every 600 presented frames (`[kessen2:watch] frame=… addr=value`) |
+| `K2_WATCH_EVERY=N` | prints the `K2_WATCH` words every N presented frames instead of 600 |
+| `K2_SCREENSHOT_EVERY=N` | saves `k2-frame-NNNNNN.png` to the working directory every N presented frames (works headless) |
+| `K2_TRACE_NONZERO=1` | with `K2_TRACE_FUNCS`: after the first 64 calls, still logs returns with `v0 != 0` (up to 256) |
+| `K2_TRACE_WORD=0xADDR` | with `K2_TRACE_FUNCS`: each logged call/return line also shows the guest word at ADDR (`word=`) |
+| `K2_TRACE_ARM=0xADDR[:N]` | with `K2_TRACE_FUNCS` (ADDR must be traced): log nothing until ADDR's N-th call, then start the 64-call windows fresh |

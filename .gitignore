@@ -72,6 +72,9 @@ compile_commands.json
 
 # --- Runtime logs (PS2Recomp writes guest call traces to the working directory) ---
 ps2_log.txt
+# Bring-up frame/VRAM dumps (K2_SCREENSHOT_EVERY, k2diag-*) show game imagery: never commit
+k2-frame-*.png
+k2diag-*.ppm
 
 # --- Agent chat uploads (pasted screenshots; local only) ---
 .gg/uploads/
