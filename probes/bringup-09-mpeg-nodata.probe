@@ -1,0 +1,11 @@
+# BRINGUP #9: libmpeg drains the game's IPU input ring through sceMpegCbNodata and the
+# Koei logo movie ends (sceMpegIsEnd returns 1).
+# Expect: 0x1b5f68 (Nodata callback) and 0x1b4c40 (ring feed) each reach calls=128 (frame 653
+# on 2026-10-04); kind=ret fn=0x00108978 n=1 ... v0=0x00000001 (frame 780); screenshots at
+# 300-450 show "KOEI PRESENTS".
+# Run: K2_PROBE=probes/bringup-09-mpeg-nodata.probe kessen2 --headless --frames 1200
+k2probe 1
+func 0x1b5f68 calls=4                # sceMpegCbNodata callback
+func 0x1b4c40 calls=4                # IPU ring feed (DMA channel 4, toIPU)
+func 0x108978 calls=4                # sceMpegIsEnd
+screenshot every=150 from=150

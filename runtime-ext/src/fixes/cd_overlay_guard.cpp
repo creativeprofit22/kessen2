@@ -5,14 +5,13 @@
 //   different disc image cannot silently run mismatched recompiled code.
 // - Overlays read into the swap slots (0x7F1800, 0x860000) are not recompiled yet
 //   (needs per-overlay dispatch upstream); log each load so the blocker is visible.
-// With K2_TRACE_CD=1 every read is logged.
+// To log reads (first 1,024 in full), load probes/cd-reads.probe (K2_PROBE): it wraps this guard.
 #include "fixes.h"
 #include "hle_bind.h"
 
 #include "ps2_stubs.h"
 
 #include <cstdio>
-#include <cstdlib>
 #include <cstring>
 
 namespace k2::runtime_ext::fixes {
@@ -32,12 +31,6 @@ constexpr std::uint32_t kSwapSlotBEnd = 0x0095D000u;
 constexpr std::uint32_t kMagic = 0x336F574Du;
 constexpr std::uint32_t kMainTextSize = 0x000CBF40u;
 constexpr std::uint32_t kMainDataSize = 0x00005180u;
-
-bool trace_enabled()
-{
-    const char *flag = std::getenv("K2_TRACE_CD");
-    return flag != nullptr && std::strcmp(flag, "1") == 0;
-}
 
 std::uint32_t guest_u32(const std::uint8_t *rdram, std::uint32_t address)
 {
@@ -65,14 +58,9 @@ void check_main_overlay(const std::uint8_t *rdram)
 
 void guarded_cd_read(std::uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
 {
-    static const bool trace = trace_enabled();
     const std::uint32_t lsn = GPR_U32(ctx, 4);
     const std::uint32_t sectors = GPR_U32(ctx, 5);
     const std::uint32_t buf = GPR_U32(ctx, 6) & PS2_RAM_MASK;
-    if (trace) {
-        std::fprintf(stderr, "[kessen2:cd] sceCdRead lsn=0x%x sectors=0x%x buf=0x%08x ra=0x%08x\n",
-                     lsn, sectors, buf, GPR_U32(ctx, 31));
-    }
     ps2_stubs::sceCdRead(rdram, ctx, runtime);
 
     if (buf == kMainOverlay) {

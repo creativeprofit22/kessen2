@@ -28,7 +28,7 @@ if(NOT rc EQUAL 0)
 endif()
 message(STATUS "none: configured OK")
 
-foreach(mode IN ITEMS link indirect include unguarded)
+foreach(mode IN ITEMS link indirect include unguarded diag)
     run_mode(${mode} rc out)
     if(rc EQUAL 0)
         message(FATAL_ERROR "mode '${mode}': forbidden dependency was NOT rejected")

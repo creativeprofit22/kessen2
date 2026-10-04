@@ -1,0 +1,9 @@
+# BRINGUP #8: guest vblank keeps pace and the intro movie plays past frame 100.
+# Expect: kind=calls fn=0x001b6670 calls=4096 before frame 5000 (frame 3815 on 2026-10-04,
+# Release); the movie frame counter (sceMpeg+0x08) is past 100 at frame 600 (128) and keeps
+# rising (second movie from ~1200: 133, 241, ... 721 at 4800). Values move with host timing.
+# Run: K2_PROBE=probes/bringup-08-movie-vblank.probe kessen2 --headless --frames 5000
+k2probe 1
+func 0x1b6670 calls=4                # vblank handler that clears the movie wait flag
+func 0x108850 calls=8                # sceMpegDemuxPssRing
+watch 0x1113320:4 every=600          # movie frame counter

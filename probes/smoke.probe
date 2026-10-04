@@ -1,0 +1,9 @@
+# k2_probe_smoke: exercises every probe kind for a short run (local test, label boot).
+k2probe 1
+func 0x1b6670 calls=2                # vblank handler
+func 0x114f40 calls=2                # sceCdRead (wraps the overlay guard)
+arm 0x114f40 after=1
+watch 0x1113320:4 every=100
+attrib 0x1113320:4
+attrib-max-events 1000
+screenshot every=500 from=500

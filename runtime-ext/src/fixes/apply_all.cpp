@@ -11,8 +11,6 @@ int apply_all(PS2Runtime &runtime)
     applied += fix_cd_overlay_guard(runtime);
     applied += fix_gs_vsync_callback_cause(runtime);
     applied += fix_frame_wait_idle(runtime);
-    // Last, so it wraps whatever the fixes above installed.
-    applied += fix_trace_funcs(runtime);
     return applied;
 }
 

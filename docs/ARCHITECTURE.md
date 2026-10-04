@@ -16,6 +16,7 @@ flowchart LR
     GEN --> APP
     RT[ps2_runtime<br/>PS2Recomp submodule] --> APP
     EXT[runtime-ext] --> APP
+    DIAG[diag: probes<br/>probes/*.probe] --> APP
     RENDER[render] --> APP
     PLATFORM[platform / SDL3] --> APP
     APP[app: kessen2.exe] --> SCREEN[Screen / audio / input]
@@ -43,11 +44,12 @@ flowchart LR
 | `generated/` | `k2_generated` (only when sources exist) | `ps2_recomp` output |
 | `external/PS2Recomp/` | `ps2_runtime` | Upstream runtime (git submodule, never edited) |
 | `runtime-ext/` | `k2_runtime_ext` | **All Kessen II–specific runtime logic**: the `SLUS_202.75` game override (ELF name + entry + CRC32) and its fixes in `src/fixes/`, bound to guest addresses; the override and fixes compile only when generated code is linked; otherwise the library builds empty and `override_count()` returns 0 ([BRINGUP.md](BRINGUP.md)) |
+| `diag/` | `k2_diag` | Game-agnostic probe diagnostics ([ADR-0006](adr/0006-probe-diagnostics.md), [README](../diag/README.md)): validates a probe spec (`K2_PROBE`) fail-closed and, with generated code, logs function calls, RAM watches, write attribution and screenshots. Kessen II probe files live in [`probes/`](../probes/README.md) |
 | `render/` | `k2_render` | Host renderer for GS/VU output |
 | `platform/` | `k2_platform` | Window, input, audio device, timing (SDL3) |
 | `app/` | `kessen2` | Composition root. With generated code: boots the ELF on `PS2Runtime` (`src/boot.cpp`; `--headless`, `--frames`, `--timeout-s`, used by the `k2_boot_smoke` test). Without: prints versions only |
 
-Each module README states Purpose / Inputs / Outputs / Allowed dependencies / Forbidden — index in [modules/](modules/README.md).
+`diag/` has its own README with the same sections. Each module README states Purpose / Inputs / Outputs / Allowed dependencies / Forbidden — index in [modules/](modules/README.md).
 
 ## Dependency rule
 
@@ -55,7 +57,8 @@ Each module README states Purpose / Inputs / Outputs / Allowed dependencies / Fo
 |---|---|
 | `k2_platform` | SDL3 only |
 | `k2_render` | `ps2_runtime`, `k2_platform` |
-| `k2_runtime_ext` | `ps2_runtime` |
+| `k2_diag` | `ps2_runtime` (may be linked only by `k2_runtime_ext` and the app) |
+| `k2_runtime_ext` | `ps2_runtime`, `k2_diag` |
 | `k2_generated` | `ps2_runtime` |
 | `kessen2` (app) | everything above |
 
@@ -65,7 +68,7 @@ Why: the platform and renderer must stay game-agnostic and reusable; generated c
 
 1. **CMake** — [`cmake/K2Modules.cmake`](../cmake/K2Modules.cmake). Each module is registered with `k2_add_module(<target> ALLOWS …)`; externals `ps2_runtime` and `SDL3::SDL3` are guarded with `k2_register_guarded()`. `k2_verify_module_graph()` (last call in the root `CMakeLists.txt`) treats direct edges as deny-by-default: every target in a module's `LINK_LIBRARIES` / `INTERFACE_LINK_LIBRARIES` must be in its `ALLOWS` list, whether guarded or not (so third-party targets such as `raylib`, `imgui` or `ps2_iop` are rejected unless allowlisted; plain non-target link items are ignored). Allowlisted unguarded helpers are then walked transitively, so a guarded edge smuggled through one is caught too. Configuration fails on any such violation, or if the generated directory appears in a non-app module's include directories.
 2. **Source scan** — [`tools/guard/check-forbidden.sh`](../tools/guard/check-forbidden.sh) rejects `#include`s of `ps2_recompiled_*` or `generated/` headers in `platform/`, `render/` and `runtime-ext/` (catches relative-path includes CMake cannot see).
-3. **Tests** — `ctest` runs `k2_dep_rule_negative` (a compiler-free fixture that must accept the valid graph and reject a direct forbidden link, an indirect one through a helper target, and a generated include dir) and `k2_guard`.
+3. **Tests** — `ctest` runs `k2_dep_rule_negative` (a compiler-free fixture that must accept the valid graph and reject a direct forbidden link, an indirect one through a helper target, a generated include dir, a non-allowlisted third-party target and `k2_render` linking `k2_diag`) and `k2_guard`.
 
 ## Build composition
 

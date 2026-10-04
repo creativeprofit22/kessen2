@@ -8,6 +8,7 @@ Each module's README has the same sections: Purpose / Inputs / Outputs / Allowed
 | Analysis inputs | _(data + scripts)_ | [analysis](../../analysis/README.md) · usage: [analysis.md](analysis.md) |
 | Recompilation | _(script)_ | usage: [recomp.md](recomp.md) · bring-up log: [BRINGUP.md](../BRINGUP.md) |
 | Generated code | `k2_generated` (conditional) | [generated](../../generated/README.md) |
+| Probe diagnostics | `k2_diag` | [diag](../../diag/README.md) · probe files: [probes](../../probes/README.md) |
 | Runtime extensions | `k2_runtime_ext` | [runtime-ext](../../runtime-ext/README.md) |
 | Renderer | `k2_render` | [render](../../render/README.md) |
 | Platform | `k2_platform` | [platform](../../platform/README.md) |

@@ -1,0 +1,8 @@
+# BRINGUP #11 (open): movie frames display duplicated (stacked twice with black bands) and the
+# first ~4 s show only the lower half. Screenshots over the star-field and opening FMV.
+# Expect while #11 is open: k2-frame-003600.png (star-field) and k2-frame-004800.png (opening
+# FMV) show the picture pushed into the lower part of the screen under a black band.
+# Run: K2_PROBE=probes/bringup-11-movie-display.probe kessen2 --headless --frames 5000
+k2probe 1
+watch 0x1113320:4 every=600          # movie frame counter (which movie frame is on screen)
+screenshot every=600 from=1200

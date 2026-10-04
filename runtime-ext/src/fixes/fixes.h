@@ -16,7 +16,6 @@ int fix_cd_overlay_guard(PS2Runtime &runtime);
 int fix_gs_vsync_callback_cause(PS2Runtime &runtime);
 int fix_frame_wait_idle(PS2Runtime &runtime);
 
-// Diagnostics (no behaviour change; off unless their environment variable is set).
-int fix_trace_funcs(PS2Runtime &runtime); // K2_TRACE_FUNCS=0xADDR[,0xADDR...]
+// Diagnostics are not fixes: use a probe file (K2_PROBE, probes/README.md, ADR-0006).
 
 } // namespace k2::runtime_ext::fixes

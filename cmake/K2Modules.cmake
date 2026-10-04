@@ -20,6 +20,9 @@
 #       Also fails if ${K2_GENERATED_DIR} appears in the include directories of
 #       a module that is not allowed to use k2_generated.
 #
+# Modules: k2_platform, k2_render, k2_diag (probe diagnostics, ADR-0006; ALLOWS ps2_runtime,
+# linked only by k2_runtime_ext and the app), k2_runtime_ext, k2_generated and kessen2.
+#
 # See docs/ARCHITECTURE.md and docs/adr/0004-module-boundaries-and-composition-root.md.
 
 include_guard(GLOBAL)

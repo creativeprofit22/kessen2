@@ -11,9 +11,14 @@ foreach(v KESSEN2_EXE BOOT_ELF FRAMES TIMEOUT_S)
     endif()
 endforeach()
 
-# Trace switches change the applied-fix count and flood the log; keep the run canonical.
-unset(ENV{K2_TRACE_FUNCS})
-unset(ENV{K2_TRACE_CD})
+# Probes and trace switches flood the log (and a bad probe exits 5); keep the run canonical.
+unset(ENV{K2_PROBE})
+unset(ENV{K2_PROBE_LOG})
+# Removed diagnostics variables make kessen2 exit 5; keep a developer's shell out of the test.
+foreach(v K2_TRACE_FUNCS K2_TRACE_WORD K2_TRACE_ARM K2_TRACE_NONZERO K2_TRACE_CD
+          K2_WATCH K2_WATCH_EVERY K2_SCREENSHOT_EVERY)
+    unset(ENV{${v}})
+endforeach()
 unset(ENV{PS2X_IOP_TRACE})
 unset(ENV{PS2X_IOP_TRACE_LIBS})
 unset(ENV{PS2X_IOP_TRACE_MAX})
@@ -60,7 +65,7 @@ endforeach()
 set(milestones
     # runtime-ext/src/kessen2_overrides.cpp: the ELF matched the Kessen II override.
     "\\[kessen2\\] game override matched"
-    # Same file: every BRINGUP.md fix bound (count from fixes/apply_all.cpp, trace unset).
+    # Same file: every BRINGUP.md fix bound (count from fixes/apply_all.cpp).
     "\\[kessen2\\] applied 4 fix\\(es\\)"
     # fixes/cd_overlay_guard.cpp: the game got past the disc-ready loop, read the main
     # overlay, and its header matches the recompiled code.

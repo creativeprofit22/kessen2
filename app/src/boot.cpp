@@ -1,24 +1,25 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "boot.h"
 
+#include "k2/diag/probe_log.h"
+#include "k2/diag/probe_session.h"
+#include "k2/diag/probe_spec.h"
 #include "ps2_runtime.h"
 #include "raylib.h"
 #include "rlgl.h"
 #include "runtime/ee_scheduler.h"
 #include "runtime/ps2_memory.h"
 
-#include <array>
 #include <atomic>
-#include <charconv>
 #include <chrono>
 #include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
-#include <cstring>
 #include <memory>
 #include <mutex>
-#include <string_view>
+#include <optional>
 #include <thread>
+#include <utility>
 
 namespace k2::app {
 namespace {
@@ -29,84 +30,19 @@ using Clock = std::chrono::steady_clock;
 // process is killed (a guest spinning without yielding never observes requestStop()).
 constexpr auto kStopGrace = std::chrono::seconds(10);
 
-// Bring-up diagnostic: K2_WATCH=0xADDR[,0xADDR...] prints up to kMaxWatched 32-bit guest RAM
-// words every K2_WATCH_EVERY presented frames (default kWatchInterval), e.g. a movie frame
-// counter. Read-only.
-constexpr std::size_t kMaxWatched = 8;
-constexpr std::uint32_t kWatchInterval = 600;
-
-struct WatchList {
-    std::array<std::uint32_t, kMaxWatched> addresses{};
-    std::size_t count = 0;
-};
-
-WatchList parse_watch_list(const char *env)
-{
-    WatchList out;
-    std::string_view list = env != nullptr ? std::string_view(env) : std::string_view{};
-    while (!list.empty() && out.count < kMaxWatched) {
-        const std::size_t comma = list.find(',');
-        std::string_view item = list.substr(0, comma);
-        list = comma == std::string_view::npos ? std::string_view{} : list.substr(comma + 1);
-        if (item.starts_with("0x") || item.starts_with("0X")) {
-            item.remove_prefix(2);
-        }
-        std::uint32_t address = 0;
-        const auto [end, ec] = std::from_chars(item.data(), item.data() + item.size(), address, 16);
-        if (ec != std::errc{} || end != item.data() + item.size() || (address & 3u) != 0) {
-            std::fprintf(stderr, "[kessen2:watch] ignoring bad address '%.*s'\n",
-                         static_cast<int>(item.size()), item.data());
-            continue;
-        }
-        out.addresses[out.count++] = address;
-    }
-    return out;
-}
-
 struct FrameCounter {
     std::uint32_t target = 0;
     std::atomic<std::uint32_t> presented{0};
     std::atomic<bool> reached{false};
-    WatchList watch;
-    // Bring-up diagnostic: K2_SCREENSHOT_EVERY=N saves k2-frame-NNNNNN.png to the working
-    // directory every N presented frames (0 = off).
-    std::uint32_t screenshotEvery = 0;
-    std::uint32_t watchEvery = kWatchInterval;
+    // Probe diagnostics (K2_PROBE, ADR-0006); null when no probe is loaded. Set before run().
+    k2::diag::ProbeSession *probe = nullptr;
 };
-
-std::uint32_t parse_positive(const char *env)
-{
-    if (env == nullptr) {
-        return 0;
-    }
-    const std::string_view text(env);
-    std::uint32_t value = 0;
-    const auto [end, ec] = std::from_chars(text.data(), text.data() + text.size(), value, 10);
-    return (ec == std::errc{} && end == text.data() + text.size()) ? value : 0;
-}
-
-void print_watch(PS2Runtime &runtime, const WatchList &watch, std::uint32_t frame)
-{
-    const std::uint8_t *rdram = runtime.memory().getRDRAM();
-    for (std::size_t i = 0; i < watch.count; ++i) {
-        const std::uint8_t *p = getConstMemPtr(rdram, watch.addresses[i]);
-        std::uint32_t value = 0;
-        if (p != nullptr) {
-            std::memcpy(&value, p, sizeof(value));
-        }
-        std::fprintf(stderr, "[kessen2:watch] frame=%u 0x%08x=0x%08x (%u)\n", frame,
-                     watch.addresses[i], value, value);
-    }
-}
 
 void on_frame(PS2Runtime &runtime, void *user)
 {
     auto &counter = *static_cast<FrameCounter *>(user);
     const std::uint32_t n = counter.presented.fetch_add(1, std::memory_order_relaxed) + 1;
-    if (counter.watch.count != 0 && n % counter.watchEvery == 0) {
-        print_watch(runtime, counter.watch, n);
-    }
-    if (counter.screenshotEvery != 0 && n % counter.screenshotEvery == 0) {
+    if (counter.probe != nullptr && counter.probe->on_presented_frame(runtime, n).screenshot) {
         // Runs on the render thread before EndDrawing: flush raylib's batched draws so the
         // frame texture is actually in the back buffer, then read it.
         rlDrawRenderBatchActive();
@@ -175,15 +111,29 @@ private:
 
 int boot(const BootOptions &options)
 {
+    // Parse and validate the probe spec before anything else: a bad spec must stop the run.
+    std::optional<k2::diag::ProbeSpec> probe_spec;
+    std::unique_ptr<k2::diag::ProbeLog> probe_log;
+    if (!options.probe_path.empty()) {
+        auto spec = k2::diag::load_probe_file(options.probe_path);
+        if (!spec) {
+            std::fprintf(stderr, "[kessen2] probe: %s: %s\n", options.probe_path.c_str(),
+                         k2::diag::to_string(spec.error()).c_str());
+            return kBootProbeInvalid;
+        }
+        auto log = k2::diag::ProbeLog::open(options.probe_log_path);
+        if (!log) {
+            std::fprintf(stderr, "[kessen2] probe: %s\n", log.error().c_str());
+            return kBootProbeInvalid;
+        }
+        probe_spec = std::move(*spec);
+        probe_log = std::move(*log);
+    }
+
     // Owned for the rest of the process: see boot.h (the caller exits with std::_Exit).
     auto runtime = std::make_unique<PS2Runtime>();
     FrameCounter frames;
     frames.target = options.frames;
-    frames.watch = parse_watch_list(std::getenv("K2_WATCH"));
-    frames.screenshotEvery = parse_positive(std::getenv("K2_SCREENSHOT_EVERY"));
-    if (const std::uint32_t every = parse_positive(std::getenv("K2_WATCH_EVERY")); every != 0) {
-        frames.watchEvery = every;
-    }
     runtime->setDebugUiCallbacks(no_op, on_frame, no_op, &frames);
 
     if (options.headless) {
@@ -201,6 +151,19 @@ int boot(const BootOptions &options)
         return kBootInitFailed;
     }
 
+    // Installed after loadELF, so function probes wrap whatever the game override installed.
+    std::unique_ptr<k2::diag::ProbeSession> probe;
+    if (probe_spec) {
+        auto session = k2::diag::ProbeSession::install(*runtime, *probe_spec, *probe_log);
+        if (!session) {
+            std::fprintf(stderr, "[kessen2] probe: %s: %s\n", options.probe_path.c_str(), session.error().c_str());
+            return kBootProbeInvalid;
+        }
+        probe = std::move(*session);
+        frames.probe = probe.get();
+        std::fprintf(stderr, "[kessen2] probe: loaded %s\n", options.probe_path.c_str());
+    }
+
     std::fprintf(stderr, "[kessen2] boot: elf=%s headless=%d frames=%u timeout_s=%u\n",
                  options.elf_path.c_str(), options.headless ? 1 : 0, options.frames, options.timeout_s);
     const auto start = Clock::now();
@@ -212,6 +175,12 @@ int boot(const BootOptions &options)
     }
     const auto elapsed_ms =
         std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - start).count();
+    if (probe) {
+        probe->finish();
+        // Leaked like the runtime (see boot.h): nothing may outlive them on a late callback.
+        (void)probe.release();
+        (void)probe_log.release();
+    }
 
     int code = kBootOk;
     const char *result = "ok";

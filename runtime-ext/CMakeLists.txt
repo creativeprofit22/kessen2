@@ -16,4 +16,5 @@ else()
     target_compile_definitions(k2_runtime_ext PRIVATE K2_HAS_GAME_OVERRIDE=0)
 endif()
 
-k2_add_module(k2_runtime_ext ALLOWS ps2_runtime)
+# k2_diag (probe diagnostics) may be linked here; nothing needs it yet.
+k2_add_module(k2_runtime_ext ALLOWS ps2_runtime k2_diag)

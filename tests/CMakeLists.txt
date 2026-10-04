@@ -10,6 +10,18 @@ add_test(NAME k2_dep_rule_negative
 # k2disc unit tests (synthetic in-memory fixtures only).
 add_subdirectory("${CMAKE_SOURCE_DIR}/tools/disc/tests" disc)
 
+# k2_diag unit tests (synthetic specs and RAM buffers only).
+add_subdirectory("${CMAKE_SOURCE_DIR}/diag/tests" diag)
+
+# Reverse-watchpoint tool self-test (validator and answering logic on a synthetic log).
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME k2_probe_tool_selftest
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/probe/reverse_watch.py" --self-test)
+else()
+    message(WARNING "Python 3 not found: k2_probe_tool_selftest not registered")
+endif()
+
 # Headless boot smoke test: local only, needs recompiled code and the user's own game files
 # (neither exists in CI). Run alone with: ctest --preset msvc-x64 -L boot
 set(K2_BOOT_ELF "${CMAKE_SOURCE_DIR}/work/disc/SLUS-20275/iso/SLUS_202.75" CACHE FILEPATH
@@ -29,6 +41,21 @@ if(TARGET k2_generated AND EXISTS "${K2_BOOT_ELF}")
         LABELS boot
         TIMEOUT 180)
     message(STATUS "k2_boot_smoke: registered (${K2_BOOT_ELF})")
+
+    # Probe diagnostics end to end (ADR-0006): fail-closed spec + every probe kind.
+    add_test(NAME k2_probe_smoke
+        COMMAND "${CMAKE_COMMAND}"
+            "-DKESSEN2_EXE=$<TARGET_FILE:kessen2>"
+            "-DBOOT_ELF=${K2_BOOT_ELF}"
+            "-DPROBE=${CMAKE_SOURCE_DIR}/probes/smoke.probe"
+            "-DBAD_PROBE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/bad.probe"
+            "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/probe_smoke"
+            "-DFRAMES=${K2_BOOT_SMOKE_FRAMES}"
+            "-DTIMEOUT_S=150"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/run_probe_smoke.cmake")
+    set_tests_properties(k2_probe_smoke PROPERTIES
+        LABELS boot
+        TIMEOUT 240)
 else()
     message(STATUS "k2_boot_smoke: skipped (needs generated code and ${K2_BOOT_ELF})")
 endif()

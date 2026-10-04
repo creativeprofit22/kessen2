@@ -1,0 +1,12 @@
+# BRINGUP #10: sceMpegCreate must clear libmpeg's status word priv+0 (0x11ef480) like the real
+# sceMpegReset, or a work area reused from movie 1 keeps a stale 0x80000000 and movie 2 ends.
+# Expect (with 0010 applied): the armed call line shows the stale word[0x011ef480]=0x80000000,
+# its ret line word[0x011ef480]=0x00000000; the movie frame counter keeps rising past 1200.
+# attrib: last-write of 0x11ef483 (0x80->0x00) is writer=0x001085d0 (sceMpegCreate itself).
+# Run: K2_PROBE=probes/bringup-10-mpeg-create-status.probe kessen2 --headless --frames 2400
+k2probe 1
+func 0x1085d0 calls=4 word=0x11ef480 # sceMpegCreate
+arm 0x1085d0 after=2                 # only from the second movie's Create
+watch 0x1113320:4 every=600          # movie frame counter
+attrib 0x11ef480:4
+attrib-max-events 20000

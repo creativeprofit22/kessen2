@@ -1,0 +1,6 @@
+# First 1,024 sceCdRead calls in full (replaces the removed K2_TRACE_CD=1): a0=lsn a1=sectors a2=destination, ra=caller;
+# later calls only as counts at powers of two. For later reads add `arm 0x114f40 after=N` to start the window at read N.
+# Wraps the overlay guard (runtime-ext cd_overlay_guard.cpp) bound at the same address.
+# Run: K2_PROBE=probes/cd-reads.probe kessen2 --headless --frames 900
+k2probe 1
+func 0x114f40 calls=1024

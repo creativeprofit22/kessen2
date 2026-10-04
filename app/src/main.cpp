@@ -9,6 +9,7 @@
 #include "boot.h"
 #endif
 
+#include <array>
 #include <charconv>
 #include <cstdint>
 #include <cstdio>
@@ -26,6 +27,28 @@ namespace {
 
 // Where tools/disc/extract.sh puts the retail boot ELF, relative to the repository root.
 constexpr std::string_view kDefaultElf = "work/disc/SLUS-20275/iso/SLUS_202.75";
+
+// Diagnostics variables removed by ADR-0006. A set one fails closed (exit 5) instead of being
+// silently ignored, so an old command line cannot produce a quiet, misleading run.
+constexpr std::array<const char *, 8> kRemovedEnvVars = {
+    "K2_TRACE_FUNCS", "K2_TRACE_WORD", "K2_TRACE_ARM", "K2_TRACE_NONZERO",
+    "K2_TRACE_CD",    "K2_WATCH",      "K2_WATCH_EVERY", "K2_SCREENSHOT_EVERY",
+};
+
+// Returns true (after printing why) if any removed diagnostics variable is set.
+bool reject_removed_env_vars()
+{
+    for (const char *name : kRemovedEnvVars) {
+        if (std::getenv(name) != nullptr) {
+            std::fprintf(stderr,
+                         "kessen2: %s was removed; use a probe file (see the mapping in "
+                         "docs/BRINGUP.md \"Diagnostics\", probes/README.md)\n",
+                         name);
+            return true;
+        }
+    }
+    return false;
+}
 
 void print_version()
 {
@@ -46,7 +69,9 @@ void print_usage()
                 "  --elf        boot ELF (default: %.*s, relative to the working directory)\n"
                 "  --headless   hidden window; stop on the first missing guest function\n"
                 "  --frames N   exit 0 after N presented frames (3 if the guest stops first)\n"
-                "  --timeout-s S  exit 4 if S seconds pass first\n",
+                "  --timeout-s S  exit 4 if S seconds pass first\n"
+                "  K2_PROBE=path  load a probe spec (probes/README.md); exit 5 if invalid\n"
+                "  K2_PROBE_LOG=path  probe output file (default: stderr)\n",
                 static_cast<int>(kDefaultElf.size()), kDefaultElf.data());
 #else
     std::printf("No recompiled game code in this build (run tools/recomp/run-recomp.sh and reconfigure).\n");
@@ -97,6 +122,19 @@ int parse_boot_args(int argc, char **argv, k2::app::BootOptions &out)
         }
         out.elf_path = std::string(kDefaultElf);
     }
+    if (reject_removed_env_vars()) {
+        return k2::app::kBootProbeInvalid;
+    }
+    if (const char *probe = std::getenv("K2_PROBE"); probe != nullptr) {
+        out.probe_path = probe;
+        if (out.probe_path.empty()) {
+            std::fprintf(stderr, "kessen2: K2_PROBE is set but empty\n");
+            return k2::app::kBootProbeInvalid;
+        }
+    }
+    if (const char *log = std::getenv("K2_PROBE_LOG"); log != nullptr) {
+        out.probe_log_path = log;
+    }
     return 0;
 }
 #endif
@@ -127,6 +165,14 @@ int main(int argc, char **argv)
     std::fflush(stderr);
     std::_Exit(rc);
 #else
+    if (reject_removed_env_vars()) {
+        return 5;
+    }
+    if (std::getenv("K2_PROBE") != nullptr) {
+        // Fail closed: probes need recompiled code, so a set K2_PROBE cannot be honoured here.
+        std::fprintf(stderr, "kessen2: K2_PROBE is set, but this build has no recompiled game code\n");
+        return 5;
+    }
     if (!arg.empty()) {
         std::fprintf(stderr, "kessen2: unknown argument '%s'\n", argv[1]);
         print_usage();

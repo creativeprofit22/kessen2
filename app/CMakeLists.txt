@@ -1,11 +1,12 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Composition root: the only target allowed to link every module.
 add_executable(kessen2 src/main.cpp)
-target_compile_features(kessen2 PRIVATE cxx_std_20)
+# C++23: the probe API (k2_diag, ADR-0006) uses std::expected.
+set_target_properties(kessen2 PROPERTIES CXX_STANDARD 23 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
 target_compile_definitions(kessen2 PRIVATE K2_VERSION="${PROJECT_VERSION}")
-target_link_libraries(kessen2 PRIVATE k2_platform k2_render k2_runtime_ext)
+target_link_libraries(kessen2 PRIVATE k2_platform k2_render k2_runtime_ext k2_diag)
 
-set(_k2_app_allows k2_platform k2_render k2_runtime_ext SDL3::SDL3)
+set(_k2_app_allows k2_platform k2_render k2_runtime_ext k2_diag SDL3::SDL3)
 if(TARGET ps2_runtime)
     target_link_libraries(kessen2 PRIVATE ps2_runtime)
     list(APPEND _k2_app_allows ps2_runtime)

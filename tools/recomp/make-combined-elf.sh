@@ -31,7 +31,7 @@ K2_OUT=${K2_OUT:-work/recomp/SLUS_202.75.combined.elf}
 elf=$K2_ISO_DIR/SLUS_202.75
 bns=$K2_ISO_DIR/LINKDATA.BNS
 
-# Observed at boot (K2_TRACE_CD=1): sceCdRead lsn=LINKDATA+0xFB8B sectors=0x1A3 -> 0x5A4800.
+# Observed at boot (probes/cd-reads.probe): sceCdRead lsn=LINKDATA+0xFB8B sectors=0x1A3 -> 0x5A4800.
 ov_vaddr=$((0x5A4800))
 ov_offset=$((0xFB8B * 0x800))
 ov_size=$((0x1A3 * 0x800))

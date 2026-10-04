@@ -103,6 +103,7 @@ endif()
 add_subdirectory(tools/disc)
 add_subdirectory(platform)
 add_subdirectory(render)
+add_subdirectory(diag)
 add_subdirectory(runtime-ext)
 add_subdirectory(app)
 
