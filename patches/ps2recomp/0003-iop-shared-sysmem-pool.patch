@@ -1,0 +1,265 @@
+diff --git a/ps2xIOP/src/emulator/core/iop_memory.cpp b/ps2xIOP/src/emulator/core/iop_memory.cpp
+index 9d1eaed..7a36a72 100644
+--- a/ps2xIOP/src/emulator/core/iop_memory.cpp
++++ b/ps2xIOP/src/emulator/core/iop_memory.cpp
+@@ -33,7 +33,6 @@ namespace ps2x::iop::detail
+         std::fill(m_scratch.begin(), m_scratch.end(), uint8_t{0});
+         m_hardware.clear();
+         m_allocations.clear();
+-        m_heapCursor = HeapBase;
+         m_interruptStatus = 0;
+         m_interruptMask = 0;
+         m_interruptControl = 1;
+@@ -341,27 +340,24 @@ namespace ps2x::iop::detail
+             return address;
+         }
+ 
+-        uint32_t candidate = alignUp(m_heapCursor, alignment);
+-        for (;;)
++        // First fit from the bottom of the pool, so freed blocks are reused.
++        std::vector<Allocation> blocks = m_allocations;
++        std::sort(blocks.begin(), blocks.end(),
++                  [](const Allocation &lhs, const Allocation &rhs)
++                  { return lhs.address < rhs.address; });
++        uint32_t candidate = alignUp(HeapBase, alignment);
++        for (const auto &block : blocks)
+         {
+-            bool overlap = false;
+-            for (const auto &block : m_allocations)
+-            {
+-                if (candidate < block.address + block.size && block.address < candidate + size)
+-                {
+-                    candidate = alignUp(block.address + block.size, alignment);
+-                    overlap = true;
+-                    break;
+-                }
+-            }
+-            if (!overlap)
++            if (block.address + block.size <= candidate)
++                continue;
++            if (block.address >= candidate && block.address - candidate >= size)
+                 break;
++            candidate = alignUp(block.address + block.size, alignment);
+         }
+         if (candidate > HeapLimit || size > HeapLimit - candidate)
+             return 0u;
+         m_allocations.push_back({candidate, size});
+         markOwned(candidate, size);
+-        m_heapCursor = std::max(m_heapCursor, candidate + size);
+         return candidate;
+     }
+ 
+@@ -379,9 +375,43 @@ namespace ps2x::iop::detail
+         return true;
+     }
+ 
++    namespace
++    {
++        // Calls visit(gapSize) for every free gap of the sysmem pool.
++        template <typename Visit>
++        void forEachFreeGap(std::vector<IopMemory::Allocation> blocks, Visit visit)
++        {
++            std::sort(blocks.begin(), blocks.end(),
++                      [](const IopMemory::Allocation &lhs, const IopMemory::Allocation &rhs)
++                      { return lhs.address < rhs.address; });
++            uint32_t cursor = IopMemory::HeapBase;
++            for (const auto &block : blocks)
++            {
++                if (block.address >= IopMemory::HeapLimit)
++                    break;
++                if (block.address > cursor)
++                    visit(block.address - cursor);
++                cursor = std::max(cursor, std::min(block.address + block.size, IopMemory::HeapLimit));
++            }
++            if (cursor < IopMemory::HeapLimit)
++                visit(IopMemory::HeapLimit - cursor);
++        }
++    }
++
+     uint32_t IopMemory::maxFreeMemory() const
+     {
+-        return m_heapCursor < HeapLimit ? HeapLimit - m_heapCursor : 0u;
++        uint32_t largest = 0u;
++        forEachFreeGap(m_allocations, [&](uint32_t gap)
++                       { largest = std::max(largest, gap); });
++        return largest;
++    }
++
++    uint32_t IopMemory::totalFreeMemory() const
++    {
++        uint32_t total = 0u;
++        forEachFreeGap(m_allocations, [&](uint32_t gap)
++                       { total += gap; });
++        return total;
+     }
+ 
+     std::optional<IopMemory::Allocation> IopMemory::allocationContaining(uint32_t address) const
+diff --git a/ps2xIOP/src/emulator/core/iop_memory.h b/ps2xIOP/src/emulator/core/iop_memory.h
+index 1e0ceca..e7d15b7 100644
+--- a/ps2xIOP/src/emulator/core/iop_memory.h
++++ b/ps2xIOP/src/emulator/core/iop_memory.h
+@@ -24,7 +24,10 @@ namespace ps2x::iop::detail
+         static constexpr uint32_t Spu2End = 0x1FA00000u;
+         static constexpr uint32_t SifBase = 0x1D000000u;
+         static constexpr uint32_t SifEnd = 0x1D001000u;
+-        static constexpr uint32_t HeapBase = 0x00120000u;
++        // One sysmem pool, as on the real IOP: IRX images, thread stacks and
++        // AllocSysMemory blocks all come from [HeapBase, HeapLimit), first fit.
++        // Above HeapLimit sit the emulator's host call stacks.
++        static constexpr uint32_t HeapBase = 0x00010000u;
+         static constexpr uint32_t HeapLimit = 0x001F0000u;
+ 
+         struct Allocation
+@@ -60,6 +63,7 @@ namespace ps2x::iop::detail
+         [[nodiscard]] uint32_t allocate(uint32_t size, uint32_t alignment = 16u, std::optional<uint32_t> fixed = std::nullopt);
+         [[nodiscard]] bool freeAllocation(uint32_t address);
+         [[nodiscard]] uint32_t maxFreeMemory() const;
++        [[nodiscard]] uint32_t totalFreeMemory() const;
+         [[nodiscard]] std::optional<Allocation> allocationContaining(uint32_t address) const;
+ 
+         [[nodiscard]] uint32_t interruptStatus() const noexcept { return m_interruptStatus; }
+@@ -104,7 +108,6 @@ namespace ps2x::iop::detail
+         std::vector<uint8_t> m_scratch;
+         std::unordered_map<uint32_t, uint32_t> m_hardware;
+         std::vector<Allocation> m_allocations;
+-        uint32_t m_heapCursor = HeapBase;
+         uint32_t m_interruptStatus = 0;
+         uint32_t m_interruptMask = 0;
+         uint32_t m_interruptControl = 1;
+diff --git a/ps2xIOP/src/emulator/imports/iop_sysmem.cpp b/ps2xIOP/src/emulator/imports/iop_sysmem.cpp
+index 2c8d8f7..67e24ab 100644
+--- a/ps2xIOP/src/emulator/imports/iop_sysmem.cpp
++++ b/ps2xIOP/src/emulator/imports/iop_sysmem.cpp
+@@ -40,9 +40,11 @@ namespace ps2x::iop::detail
+             setV0(IopMemory::RamSize);
+             return true;
+         case 7: // QueryMaxFreeMemSize
+-        case 8: // QueryTotalFreeMemSize
+             setV0(m_memory.maxFreeMemory());
+             return true;
++        case 8: // QueryTotalFreeMemSize
++            setV0(m_memory.totalFreeMemory());
++            return true;
+         case 9: // QueryBlockTopAddress
+             if (const auto block = m_memory.allocationContaining(a0))
+                 setV0(block->address);
+diff --git a/ps2xIOP/src/emulator/iop_emulator.cpp b/ps2xIOP/src/emulator/iop_emulator.cpp
+index 040179f..4fa1072 100644
+--- a/ps2xIOP/src/emulator/iop_emulator.cpp
++++ b/ps2xIOP/src/emulator/iop_emulator.cpp
+@@ -136,7 +136,6 @@ namespace ps2x::iop::detail
+             pendingDmaInterrupts.clear();
+             pendingGuestCallbacks.clear();
+             nextModuleId = 1;
+-            moduleCursor = kModuleLoadBase;
+             totalCycles = 0;
+             totalInstructions = 0;
+             eeCycleCarry = 0;
+@@ -678,8 +677,7 @@ namespace ps2x::iop::detail
+         ModuleLoadResult loadImage(std::string path, std::span<const uint8_t> image, const void *arguments, uint32_t argumentSize)
+         {
+             ModuleLoadResult result{true, -1, -1};
+-            const IopImageLoadResult loaded = IopModuleLoader::load(image, memory, moduleCursor);
+-            moduleCursor = loaded.nextModuleCursor;
++            const IopImageLoadResult loaded = IopModuleLoader::load(image, memory);
+             if (!loaded)
+             {
+                 if (loaded.error == IopImageLoadError::InvalidElf)
+@@ -785,7 +783,6 @@ namespace ps2x::iop::detail
+         std::map<int, uint64_t> pendingDmaInterrupts;
+         std::multimap<uint64_t, ScheduledGuestCallback> pendingGuestCallbacks;
+         uint32_t nextModuleId = 1;
+-        uint32_t moduleCursor = kModuleLoadBase;
+         uint64_t totalCycles = 0;
+         uint64_t totalInstructions = 0;
+         uint64_t eeCycleCarry = 0;
+diff --git a/ps2xIOP/src/emulator/services/iop_module_loader.cpp b/ps2xIOP/src/emulator/services/iop_module_loader.cpp
+index 80e59d6..0d97bcb 100644
+--- a/ps2xIOP/src/emulator/services/iop_module_loader.cpp
++++ b/ps2xIOP/src/emulator/services/iop_module_loader.cpp
+@@ -13,6 +13,7 @@ namespace ps2x::iop::detail
+     namespace
+     {
+         constexpr uint32_t kMaxImageSize = 64u * 1024u * 1024u;
++        // Fixed-address (ET_EXEC) images below this are relocated instead.
+         constexpr uint32_t kModuleLoadBase = 0x00010000u;
+ 
+         constexpr uint16_t ET_EXEC = 2;
+@@ -367,10 +368,9 @@ namespace ps2x::iop::detail
+         return host.readGuest(guestAddress, bytes.data(), bytes.size());
+     }
+ 
+-    IopImageLoadResult IopModuleLoader::load(std::span<const uint8_t> image, IopMemory &memory, uint32_t moduleCursor)
++    IopImageLoadResult IopModuleLoader::load(std::span<const uint8_t> image, IopMemory &memory)
+     {
+         IopImageLoadResult result;
+-        result.nextModuleCursor = moduleCursor;
+         if (image.size() < sizeof(Elf32Ehdr))
+             return result;
+ 
+@@ -429,20 +429,34 @@ namespace ps2x::iop::detail
+                               (minVaddr < kModuleLoadBase && minVaddr != 0u);
+         uint32_t base = 0u;
+         int64_t delta = 0;
++        // Returns the image's sysmem block unless the load completes.
++        struct ReservedBlock
++        {
++            IopMemory &memory;
++            uint32_t address = 0u;
++            ~ReservedBlock()
++            {
++                if (address != 0u)
++                    (void)memory.freeAllocation(address);
++            }
++        } reserved{memory};
+         if (relocate)
+         {
+-            base = alignUp(moduleCursor, 0x100u);
+-            if (base + span >= IopMemory::HeapBase)
++            // IRX images come from the same sysmem pool as AllocSysMemory blocks.
++            base = memory.allocate(span, 0x100u);
++            if (base == 0u)
+             {
+                 result.error = IopImageLoadError::ArenaExhausted;
+                 return result;
+             }
++            reserved.address = base;
+             delta = static_cast<int64_t>(base) - minVaddr;
+-            result.nextModuleCursor = base + span;
+         }
+         else
+         {
+             base = minVaddr;
++            // Reserve the fixed range so later allocations do not overlap it (best effort).
++            reserved.address = memory.allocate(span, 16u, base);
+         }
+ 
+         if (hasLoad)
+@@ -555,6 +569,7 @@ namespace ps2x::iop::detail
+             }
+         }
+ 
++        reserved.address = 0u;
+         result.error = IopImageLoadError::None;
+         return result;
+     }
+diff --git a/ps2xIOP/src/emulator/services/iop_module_loader.h b/ps2xIOP/src/emulator/services/iop_module_loader.h
+index 6cd9ef6..87c3f12 100644
+--- a/ps2xIOP/src/emulator/services/iop_module_loader.h
++++ b/ps2xIOP/src/emulator/services/iop_module_loader.h
+@@ -29,7 +29,6 @@ namespace ps2x::iop::detail
+         uint32_t size = 0;
+         uint32_t entry = 0;
+         uint32_t gp = 0;
+-        uint32_t nextModuleCursor = 0;
+         bool relocationsComplete = true;
+ 
+         [[nodiscard]] explicit operator bool() const noexcept
+@@ -43,6 +42,6 @@ namespace ps2x::iop::detail
+     public:
+         [[nodiscard]] static bool readWholeHostFile(IopHost &host, std::string_view guestPath, std::vector<uint8_t> &bytes);
+         [[nodiscard]] static bool readElfFromGuest(IopHost &host, uint32_t guestAddress, std::vector<uint8_t> &bytes);
+-        [[nodiscard]] static IopImageLoadResult load(std::span<const uint8_t> image, IopMemory &memory, uint32_t moduleCursor);
++        [[nodiscard]] static IopImageLoadResult load(std::span<const uint8_t> image, IopMemory &memory);
+     };
+ }

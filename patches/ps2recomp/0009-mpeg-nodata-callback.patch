@@ -1,0 +1,142 @@
+diff --git a/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.cpp b/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.cpp
+index 432c47a..4f3996a 100644
+--- a/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.cpp
++++ b/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.cpp
+@@ -17,6 +17,7 @@ extern "C"
+ #endif
+ 
+ #include <deque>
++#include <functional>
+ #include <memory>
+ 
+ #include "Syscalls/Helpers/State.h"
+@@ -495,6 +496,8 @@ namespace ps2_stubs
+             bool sawSequenceEnd = false;
+             bool streamEnded = false;
+             bool decoderFailed = false;
++            // A sceMpegCbNodata invocation is queued and has not completed yet.
++            bool nodataCallbackQueued = false;
+             uint64_t cdStreamGeneration = 0u;
+             bool waitingForVideoSequenceHeader = true;
+             std::vector<uint8_t> videoSequenceSyncBuffer;
+@@ -1581,26 +1584,27 @@ namespace ps2_stubs
+             return true;
+         }
+ 
+-        void dispatchGuestStreamCallback(uint8_t *rdram,
++        bool dispatchGuestStreamCallback(uint8_t *rdram,
+                                          R5900Context *callerCtx,
+                                          PS2Runtime *runtime,
+                                          const MpegStreamCallbackEvent &event,
+-                                         const MpegRegisteredCallback &callback)
++                                         const MpegRegisteredCallback &callback,
++                                         std::function<void()> afterComplete = {})
+         {
+             if (!rdram || !callerCtx || !runtime || callback.func == 0u || !runtime->hasFunction(callback.func))
+             {
+-                return;
++                return false;
+             }
+ 
+             const uint32_t cbDataAddr = runtime->internalMalloc(kMpegCallbackDataSize, 16u);
+             if (cbDataAddr == 0u)
+             {
+-                return;
++                return false;
+             }
+             if (!writeMpegCallbackData(rdram, cbDataAddr, event))
+             {
+                 runtime->guestFree(cbDataAddr);
+-                return;
++                return false;
+             }
+ 
+             R5900Context callbackCtx = *callerCtx;
+@@ -1615,11 +1619,78 @@ namespace ps2_stubs
+             GuestInvocation invocation{};
+             invocation.kind = GuestInvocationKind::RpcCallback;
+             invocation.context = callbackCtx;
+-            invocation.onComplete = [runtime, cbDataAddr](const R5900Context &, R5900Context &)
++            invocation.onComplete = [runtime, cbDataAddr, afterComplete = std::move(afterComplete)](const R5900Context &, R5900Context &)
+             {
+                 runtime->guestFree(cbDataAddr);
++                if (afterComplete)
++                {
++                    afterComplete();
++                }
+             };
+             runtime->eeScheduler().queueInvocation(std::move(invocation));
++            return true;
++        }
++
++        // libmpeg calls sceMpegCbNodata whenever the decoder needs more input; games answer
++        // by feeding their IPU input ring over DMA channel 4 and so consume that ring. The
++        // HLE decoder reads the demuxed stream directly and never asks, so a game that waits
++        // for its ring to drain (e.g. at the end of a movie) would wait forever. Queue the
++        // game's Nodata callbacks, at most one pending round per sceMpeg instance.
++        void queueNodataCallbacks(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime, uint32_t mpegAddr)
++        {
++            constexpr uint32_t kMpegCbNodata = 1u;
++            std::vector<MpegRegisteredCallback> nodataCallbacks;
++            {
++                std::lock_guard<std::mutex> lock(g_mpeg_stub_mutex);
++                MpegPlaybackState &playback = getPlaybackState(mpegAddr);
++                if (playback.nodataCallbackQueued)
++                {
++                    return;
++                }
++                const auto it = g_mpeg_stub_state.callbacksByMpeg.find(mpegAddr);
++                if (it == g_mpeg_stub_state.callbacksByMpeg.end())
++                {
++                    return;
++                }
++                for (const MpegRegisteredCallback &callback : it->second)
++                {
++                    if (!callback.stream && callback.type == kMpegCbNodata)
++                    {
++                        nodataCallbacks.push_back(callback);
++                    }
++                }
++                if (nodataCallbacks.empty())
++                {
++                    return;
++                }
++                playback.nodataCallbackQueued = true;
++            }
++
++            MpegStreamCallbackEvent event{};
++            event.mpegAddr = mpegAddr;
++            event.streamType = kMpegCbNodata;
++            bool queuedAny = false;
++            for (size_t i = 0; i < nodataCallbacks.size(); ++i)
++            {
++                const bool last = i + 1u == nodataCallbacks.size();
++                std::function<void()> afterComplete;
++                if (last)
++                {
++                    afterComplete = [mpegAddr]()
++                    {
++                        std::lock_guard<std::mutex> lock(g_mpeg_stub_mutex);
++                        getPlaybackState(mpegAddr).nodataCallbackQueued = false;
++                    };
++                }
++                const bool queued = dispatchGuestStreamCallback(rdram, ctx, runtime, event, nodataCallbacks[i], std::move(afterComplete));
++                queuedAny = queuedAny || queued;
++                if (last && !queued)
++                {
++                    std::lock_guard<std::mutex> lock(g_mpeg_stub_mutex);
++                    getPlaybackState(mpegAddr).nodataCallbackQueued = false;
++                }
++            }
++            (void)queuedAny;
+         }
+ 
+         void dispatchStreamCallbacks(uint8_t *rdram,
+@@ -2291,6 +2362,7 @@ namespace ps2_stubs
+         uint32_t frameCount = 0u;
+         bool haveFrame = false;
+         MpegDecodedFrame frame;
++        queueNodataCallbacks(rdram, ctx, runtime, mpegAddr);
+         {
+             std::unique_lock<std::mutex> lock(g_mpeg_stub_mutex);
+             MpegPlaybackState &playback = getPlaybackState(mpegAddr);

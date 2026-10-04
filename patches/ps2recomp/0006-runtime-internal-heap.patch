@@ -1,0 +1,251 @@
+diff --git a/ps2xRuntime/include/ps2_runtime.h b/ps2xRuntime/include/ps2_runtime.h
+index 4b9242c..38c55f5 100644
+--- a/ps2xRuntime/include/ps2_runtime.h
++++ b/ps2xRuntime/include/ps2_runtime.h
+@@ -380,6 +380,11 @@ public:
+     uint32_t guestCalloc(uint32_t count, uint32_t size, uint32_t alignment = 16u);
+     uint32_t guestRealloc(uint32_t guestAddr, uint32_t newSize, uint32_t alignment = 16u);
+     void guestFree(uint32_t guestAddr);
++    // Allocations made by the runtime itself (HLE packets, callback argument blocks, ...).
++    // They come from a reserved arena above the game heap, so a game that claims its
++    // whole malloc heap at boot does not starve the runtime; falls back to guestMalloc.
++    // Free with guestFree.
++    uint32_t internalMalloc(uint32_t size, uint32_t alignment = 16u);
+     uint32_t guestHeapBase() const;
+     uint32_t guestHeapEnd() const;
+     uint32_t guestHeapLimit() const;
+@@ -508,6 +513,7 @@ private:
+     mutable std::mutex m_guestHeapMutex;
+     mutable std::mutex m_asyncCallbackStackMutex;
+     std::vector<GuestHeapBlock> m_guestHeapBlocks;
++    std::vector<GuestHeapBlock> m_internalHeapBlocks;
+     uint32_t m_guestHeapBase = 0x00100000u;
+     uint32_t m_guestHeapEnd = 0x00100000u;
+     uint32_t m_guestHeapLimit = PS2_RAM_SIZE;
+diff --git a/ps2xRuntime/src/lib/Kernel/Stubs/Font.cpp b/ps2xRuntime/src/lib/Kernel/Stubs/Font.cpp
+index 41e4387..206858a 100644
+--- a/ps2xRuntime/src/lib/Kernel/Stubs/Font.cpp
++++ b/ps2xRuntime/src/lib/Kernel/Stubs/Font.cpp
+@@ -41,7 +41,7 @@ namespace ps2_stubs
+                 constexpr uint32_t kClutQwc = 4u;
+                 constexpr uint32_t kHeaderQwc = 6u;
+                 constexpr uint32_t kTotalQwc = kHeaderQwc + kClutQwc;
+-                uint32_t pktAddr = runtime->guestMalloc(kTotalQwc * 16u, 16u);
++                uint32_t pktAddr = runtime->internalMalloc(kTotalQwc * 16u, 16u);
+                 if (pktAddr != 0u)
+                 {
+                     uint8_t *pkt = getMemPtr(rdram, pktAddr);
+@@ -122,7 +122,7 @@ namespace ps2_stubs
+         int qwc = (fontDataSz >= 0) ? (fontDataSz >> 4) : ((fontDataSz + 0xf) >> 4);
+ 
+         uint32_t glyphSrc = fontDataAddr + static_cast<uint32_t>(fontDataSz) + 0x10u;
+-        uint32_t glyphAlloc = runtime->guestMalloc(0x2010u, 0x40u);
++        uint32_t glyphAlloc = runtime->internalMalloc(0x2010u, 0x40u);
+         if (uint8_t *p = getMemPtr(rdram, kFontBase + fontOff))
+             *reinterpret_cast<uint32_t *>(p) = glyphAlloc;
+ 
+@@ -140,7 +140,7 @@ namespace ps2_stubs
+         if (isDoubleByte == 0u)
+         {
+             uint32_t kernSrc = glyphSrc + 0x2010u;
+-            uint32_t kernAlloc = runtime->guestMalloc(0xc400u, 0x40u);
++            uint32_t kernAlloc = runtime->internalMalloc(0xc400u, 0x40u);
+             if (glyphAlloc != 0u)
+                 *reinterpret_cast<uint32_t *>(getMemPtr(rdram, glyphAlloc + 0x2000u)) = kernAlloc;
+             if (kernAlloc != 0u)
+@@ -180,7 +180,7 @@ namespace ps2_stubs
+             const uint32_t headerQwc = 12u;
+             const uint32_t imageQwc = static_cast<uint32_t>(qwc);
+             const uint32_t totalQwc = headerQwc + imageQwc;
+-            uint32_t pktAddr = runtime->guestMalloc(totalQwc * 16u, 16u);
++            uint32_t pktAddr = runtime->internalMalloc(totalQwc * 16u, 16u);
+             if (pktAddr != 0u)
+             {
+                 uint8_t *pkt = getMemPtr(rdram, pktAddr);
+diff --git a/ps2xRuntime/src/lib/Kernel/Stubs/GS.cpp b/ps2xRuntime/src/lib/Kernel/Stubs/GS.cpp
+index 9c54919..ea674c0 100644
+--- a/ps2xRuntime/src/lib/Kernel/Stubs/GS.cpp
++++ b/ps2xRuntime/src/lib/Kernel/Stubs/GS.cpp
+@@ -615,7 +615,7 @@ namespace ps2_stubs
+         const uint32_t imageQwc = (totalImageBytes + 15u) / 16u;
+         const uint32_t totalQwc = headerQwc + imageQwc;
+ 
+-        uint32_t pktAddr = runtime->guestMalloc(totalQwc * 16u, 16u);
++        uint32_t pktAddr = runtime->internalMalloc(totalQwc * 16u, 16u);
+         if (pktAddr == 0)
+         {
+             setReturnS32(ctx, -1);
+@@ -709,7 +709,7 @@ namespace ps2_stubs
+                           (static_cast<uint64_t>(0u) << 48);
+         uint64_t trxreg = static_cast<uint64_t>(img.height) << 32 | static_cast<uint64_t>(img.width);
+ 
+-        uint32_t pktAddr = runtime->guestMalloc(80u, 16u);
++        uint32_t pktAddr = runtime->internalMalloc(80u, 16u);
+         if (pktAddr == 0)
+         {
+             setReturnS32(ctx, -1);
+@@ -810,7 +810,7 @@ namespace ps2_stubs
+ 
+             if (runtime)
+             {
+-                uint32_t pktAddr = runtime->guestMalloc(128u, 16u);
++                uint32_t pktAddr = runtime->internalMalloc(128u, 16u);
+                 if (pktAddr != 0u)
+                 {
+                     uint8_t *pkt = getMemPtr(rdram, pktAddr);
+diff --git a/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.cpp b/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.cpp
+index 21f2c44..432c47a 100644
+--- a/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.cpp
++++ b/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.cpp
+@@ -1592,7 +1592,7 @@ namespace ps2_stubs
+                 return;
+             }
+ 
+-            const uint32_t cbDataAddr = runtime->guestMalloc(kMpegCallbackDataSize, 16u);
++            const uint32_t cbDataAddr = runtime->internalMalloc(kMpegCallbackDataSize, 16u);
+             if (cbDataAddr == 0u)
+             {
+                 return;
+@@ -2016,7 +2016,7 @@ namespace ps2_stubs
+         mpegGuestWrite32(rdram, puVar4 + 0x8, a1_init);
+         mpegGuestWrite32(rdram, puVar4 + 0xC, a1_init);
+ 
+-        const uint32_t allocResult = runtime ? runtime->guestMalloc(0x600, 8u) : (uVar3 + 0x200u);
++        const uint32_t allocResult = runtime ? runtime->internalMalloc(0x600, 8u) : (uVar3 + 0x200u);
+         mpegGuestWrite32(rdram, uVar3 + 0x44, allocResult);
+ 
+         // param_1[0..2] = 0; param_1[4..0xe] = 0xffffffff/0 as per decompilation
+diff --git a/ps2xRuntime/src/lib/Kernel/Stubs/SIF.cpp b/ps2xRuntime/src/lib/Kernel/Stubs/SIF.cpp
+index dc975ed..29da1df 100644
+--- a/ps2xRuntime/src/lib/Kernel/Stubs/SIF.cpp
++++ b/ps2xRuntime/src/lib/Kernel/Stubs/SIF.cpp
+@@ -247,7 +247,7 @@ namespace ps2_stubs
+         if (!runtime->hasFunction(registered.function))
+             return false;
+ 
+-        const uint32_t packetAddress = runtime->guestMalloc(static_cast<uint32_t>(packetSize), 16u);
++        const uint32_t packetAddress = runtime->internalMalloc(static_cast<uint32_t>(packetSize), 16u);
+         if (packetAddress == 0u)
+             return false;
+ 
+diff --git a/ps2xRuntime/src/lib/ps2_iop_host.cpp b/ps2xRuntime/src/lib/ps2_iop_host.cpp
+index 8d46e03..c85328b 100644
+--- a/ps2xRuntime/src/lib/ps2_iop_host.cpp
++++ b/ps2xRuntime/src/lib/ps2_iop_host.cpp
+@@ -236,7 +236,7 @@ uint32_t PS2IopHostAdapter::allocateIopHandle(ps2x::iop::IopHandleKind kind)
+ 
+ uint32_t PS2IopHostAdapter::allocateGuest(uint32_t size, uint32_t alignment)
+ {
+-    return m_runtime.guestMalloc(size, alignment);
++    return m_runtime.internalMalloc(size, alignment);
+ }
+ 
+ void PS2IopHostAdapter::freeGuest(uint32_t address)
+diff --git a/ps2xRuntime/src/lib/ps2_runtime.cpp b/ps2xRuntime/src/lib/ps2_runtime.cpp
+index 45cb9d2..936f02f 100644
+--- a/ps2xRuntime/src/lib/ps2_runtime.cpp
++++ b/ps2xRuntime/src/lib/ps2_runtime.cpp
+@@ -91,6 +91,13 @@ namespace
+     constexpr uint32_t kGuestHeapDefaultAlignment = 16u;
+     constexpr uint32_t kGuestHeapSafetyPad = 0x1000u;
+     constexpr uint32_t kGuestHeapHardLimit = 0x01F00000u;
++    // Reserved top of RAM (above kGuestHeapHardLimit):
++    //   0x01F00000-0x01F31000  RPC packet/server, TLS and boot-mode pools
++    //   0x01F40000-0x01F60000  runtime-internal allocations (internalMalloc)
++    //   0x01F60000-0x02000000  async callback stacks, growing down
++    constexpr uint32_t kInternalHeapBase = 0x01F40000u;
++    constexpr uint32_t kInternalHeapLimit = 0x01F60000u;
++    constexpr uint32_t kAsyncCallbackStackFloor = kInternalHeapLimit;
+ 
+     constexpr uint32_t COP0_CAUSE_EXCCODE_MASK = 0x0000007Cu;
+     constexpr uint32_t COP0_CAUSE_BD = 0x80000000u;
+@@ -503,7 +510,9 @@ PS2Runtime::PS2Runtime()
+     m_guestHeapLimit = std::min(kGuestHeapHardLimit, PS2_RAM_SIZE);
+     m_guestHeapSuggestedBase = kGuestHeapDefaultBase;
+     m_guestHeapConfigured = false;
+-    m_asyncCallbackStackFloor = std::min(kGuestHeapHardLimit, PS2_RAM_SIZE);
++    m_internalHeapBlocks.clear();
++    m_internalHeapBlocks.push_back({kInternalHeapBase, kInternalHeapLimit - kInternalHeapBase, true});
++    m_asyncCallbackStackFloor = kAsyncCallbackStackFloor;
+     m_asyncCallbackStackTop = PS2_RAM_SIZE;
+ }
+ 
+@@ -1953,10 +1962,78 @@ void PS2Runtime::guestFree(uint32_t guestAddr)
+     }
+ 
+     std::lock_guard<std::mutex> lock(m_guestHeapMutex);
++    const uint32_t normalizedAddr = guestAddr & PS2_RAM_MASK;
++    if (normalizedAddr >= kInternalHeapBase && normalizedAddr < kInternalHeapLimit)
++    {
++        for (size_t i = 0; i < m_internalHeapBlocks.size(); ++i)
++        {
++            GuestHeapBlock &block = m_internalHeapBlocks[i];
++            if (block.free || block.addr != normalizedAddr)
++            {
++                continue;
++            }
++            block.free = true;
++            if (i + 1u < m_internalHeapBlocks.size() && m_internalHeapBlocks[i + 1u].free)
++            {
++                block.size += m_internalHeapBlocks[i + 1u].size;
++                m_internalHeapBlocks.erase(m_internalHeapBlocks.begin() + static_cast<std::ptrdiff_t>(i + 1u));
++            }
++            if (i > 0u && m_internalHeapBlocks[i - 1u].free)
++            {
++                m_internalHeapBlocks[i - 1u].size += block.size;
++                m_internalHeapBlocks.erase(m_internalHeapBlocks.begin() + static_cast<std::ptrdiff_t>(i));
++            }
++            return;
++        }
++        return;
++    }
+     ensureGuestHeapInitializedLocked();
+     freeGuestBlockLocked(guestAddr);
+ }
+ 
++uint32_t PS2Runtime::internalMalloc(uint32_t size, uint32_t alignment)
++{
++    if (size == 0u || size > (kInternalHeapLimit - kInternalHeapBase))
++    {
++        return guestMalloc(size, alignment);
++    }
++    const uint32_t normalizedAlignment = normalizeGuestHeapAlignment(alignment);
++    const uint32_t allocSize = alignGuestHeapValue(size, kGuestHeapDefaultAlignment);
++    {
++        std::lock_guard<std::mutex> lock(m_guestHeapMutex);
++        // First fit; blocks stay sorted by address and cover the whole arena.
++        for (size_t i = 0; i < m_internalHeapBlocks.size(); ++i)
++        {
++            const GuestHeapBlock block = m_internalHeapBlocks[i];
++            if (!block.free)
++            {
++                continue;
++            }
++            const uint32_t start = alignGuestHeapValue(block.addr, normalizedAlignment);
++            const uint32_t blockEnd = block.addr + block.size;
++            if (start < block.addr || start >= blockEnd || blockEnd - start < allocSize)
++            {
++                continue;
++            }
++            std::vector<GuestHeapBlock> replacement;
++            if (start > block.addr)
++            {
++                replacement.push_back({block.addr, start - block.addr, true});
++            }
++            replacement.push_back({start, allocSize, false});
++            if (start + allocSize < blockEnd)
++            {
++                replacement.push_back({start + allocSize, blockEnd - (start + allocSize), true});
++            }
++            m_internalHeapBlocks.erase(m_internalHeapBlocks.begin() + static_cast<std::ptrdiff_t>(i));
++            m_internalHeapBlocks.insert(m_internalHeapBlocks.begin() + static_cast<std::ptrdiff_t>(i),
++                                        replacement.begin(), replacement.end());
++            return start;
++        }
++    }
++    return guestMalloc(size, alignment);
++}
++
+ uint32_t PS2Runtime::guestHeapBase() const
+ {
+     std::lock_guard<std::mutex> lock(m_guestHeapMutex);

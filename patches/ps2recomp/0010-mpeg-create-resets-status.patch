@@ -1,0 +1,19 @@
+diff --git a/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.cpp b/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.cpp
+index 4f3996a..4f1fad6 100644
+--- a/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.cpp
++++ b/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.cpp
+@@ -2132,6 +2132,14 @@ namespace ps2_stubs
+             setDynamicRet = *reinterpret_cast<uint32_t *>(p);
+         mpegGuestWrite32(rdram, puVar4 + 12, setDynamicRet);
+ 
++        // libmpeg's sceMpegCreate ends with sceMpegReset, which clears the decoder's end/status
++        // words at the start of the private area. Without it a reused work area keeps stale
++        // values there, and sceMpegIsEnd / the status word read by the game report the new
++        // stream as already finished (e.g. a second movie in the same buffer ends at once).
++        mpegGuestWrite32(rdram, uVar3 + 0x00, 0u);
++        mpegGuestWrite32(rdram, uVar3 + 0x04, 0u);
++        mpegGuestWrite32(rdram, uVar3 + 0x08, 0u);
++
+         setReturnU32(ctx, setDynamicRet);
+     }
+ 

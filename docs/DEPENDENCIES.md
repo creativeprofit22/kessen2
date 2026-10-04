@@ -4,7 +4,7 @@ Checked **2026-09-26**. Update the date and pins together.
 
 | Name | Version / commit | Licence | How consumed | Notes |
 |---|---|---|---|---|
-| [PS2Recomp](https://github.com/ran-j/PS2Recomp) | `75d729ce40d7eed9649fd4bb05628dee520f3d0c` (main, 2026-09-19, "Feature/iop emulator (#244)") | GPL-3.0 | git submodule `external/PS2Recomp`, `add_subdirectory(... EXCLUDE_FROM_ALL)` | Only `ps2xIOP` + `ps2xRuntime` are configured (see below) |
+| [PS2Recomp](https://github.com/ran-j/PS2Recomp) | `75d729ce40d7eed9649fd4bb05628dee520f3d0c` (main, 2026-09-19, "Feature/iop emulator (#244)") | GPL-3.0 | git submodule `external/PS2Recomp`, `add_subdirectory(... EXCLUDE_FROM_ALL)` via `cmake/K2PatchedPs2Recomp.cmake` | Only `ps2xIOP` + `ps2xRuntime` are configured (see below). Patches listed in `patches/ps2recomp/series` are applied at configure time to an export of the pinned commit under the build dir; the submodule is never modified ([README](../patches/ps2recomp/README.md)) |
 | [SDL](https://github.com/libsdl-org/SDL) | 3.4.16 — tag `release-3.4.16`, commit `fa2c02bb6e21974a89ea9824bc53c9932abe5f9c` | Zlib | `FetchContent` by SHA, shared (`SDL3.dll` copied beside `kessen2.exe`) | Used only by `k2_platform` |
 | [raylib](https://github.com/raysan5/raylib) | 5.5 (`c1ab645c…`) | Zlib | Transitive, fetched by PS2Recomp | Upstream host backend |
 | [Dear ImGui](https://github.com/ocornut/imgui) | v1.92.7-docking (`b1bcb12a…`) | MIT | Transitive, fetched by PS2Recomp | Upstream debug UI |
@@ -41,5 +41,5 @@ Checked **2026-09-26**. Update the date and pins together.
 ## Updating a pin
 
 1. `git -C external/PS2Recomp fetch && git -C external/PS2Recomp checkout <sha>` (or change the SDL `GIT_TAG` SHA in the root `CMakeLists.txt`).
-2. Reconfigure, build, `ctest --preset msvc-x64`.
+2. Reconfigure, build, `ctest --preset msvc-x64`. Configure fails if a patch in `patches/ps2recomp/series` no longer applies: regenerate it against the new pin, or drop it if upstream merged the fix.
 3. Update this table and the check date.

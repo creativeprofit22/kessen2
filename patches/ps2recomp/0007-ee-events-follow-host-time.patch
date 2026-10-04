@@ -1,0 +1,97 @@
+diff --git a/ps2xRuntime/include/runtime/ee_scheduler.h b/ps2xRuntime/include/runtime/ee_scheduler.h
+index f247ff9..41d45f1 100644
+--- a/ps2xRuntime/include/runtime/ee_scheduler.h
++++ b/ps2xRuntime/include/runtime/ee_scheduler.h
+@@ -266,6 +266,8 @@ public:
+     static constexpr uint64_t kEeClockHz = 294912000ull;
+     static constexpr uint32_t kGeneratedCheckpointCycles = 32u;
+     static constexpr uint32_t kGuestDispatchCycles = 8u;
++    // Checkpoints between host-clock polls in checkpointDue().
++    static constexpr uint32_t kHostDeadlinePollInterval = 1024u;
+     static constexpr uint64_t kDefaultTimeSliceCycles = 65536ull;
+ 
+     explicit EeScheduler(PS2Runtime &runtime);
+@@ -449,6 +451,11 @@ private:
+     uint32_t m_gsVSyncCallbackSp = 0;
+     std::unordered_map<uint64_t, uint32_t> m_invocationStackTops;
+     std::atomic<uint64_t> m_nextDeadlineCycle{0};
++    // Earliest host deadline of m_deadlines (steady_clock ticks, 0 = none). When the guest
++    // runs slower than real time, events become due on host time and the EE clock catches
++    // up to them (see processDueDeadlines), so vblank and alarms keep real-time pacing.
++    std::atomic<int64_t> m_nextDeadlineHostTicks{0};
++    uint32_t m_hostDeadlinePollCountdown = 0;
+ 
+     mutable std::mutex m_snapshotMutex;
+     EeKernelSnapshot m_snapshot;
+diff --git a/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp b/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp
+index c5e31c4..b1e46d8 100644
+--- a/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp
++++ b/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp
+@@ -371,6 +371,24 @@ bool EeScheduler::checkpointDue(uint32_t cycles) noexcept
+         return true;
+     }
+ 
++    // Poll host time now and then: a guest that runs slower than real time must still see
++    // vblank/alarm events on time (processDueDeadlines advances the EE clock to them).
++    if (m_hostDeadlinePollCountdown == 0u)
++    {
++        m_hostDeadlinePollCountdown = kHostDeadlinePollInterval;
++        const int64_t nextHostTicks = m_nextDeadlineHostTicks.load(std::memory_order_acquire);
++        if (nextHostTicks != 0 &&
++            std::chrono::steady_clock::now().time_since_epoch().count() >= nextHostTicks)
++        {
++            m_checkpointPending.store(true, std::memory_order_release);
++            return true;
++        }
++    }
++    else
++    {
++        --m_hostDeadlinePollCountdown;
++    }
++
+     if (m_eeCycle < m_sliceEndCycle)
+     {
+         return false;
+@@ -1777,6 +1795,27 @@ void EeScheduler::processDueDeadlines()
+ {
+     for (;;)
+     {
++        // Guest behind real time: bring the EE clock up to the earliest event whose host
++        // deadline has passed, so it becomes due below. The clock only moves forward.
++        uint64_t catchUpCycle = 0u;
++        {
++            std::lock_guard lock(m_eventMutex);
++            const auto now = std::chrono::steady_clock::now();
++            for (const ScheduledEvent &item : m_deadlines)
++            {
++                if (item.hostDeadline <= now && item.deadlineCycle > m_eeCycle &&
++                    (catchUpCycle == 0u || item.deadlineCycle < catchUpCycle))
++                {
++                    catchUpCycle = item.deadlineCycle;
++                }
++            }
++        }
++        while (catchUpCycle > m_eeCycle)
++        {
++            const uint64_t remaining = catchUpCycle - m_eeCycle;
++            accountCycles(static_cast<uint32_t>(std::min<uint64_t>(remaining, UINT32_MAX)));
++        }
++
+         std::vector<ScheduledEvent> due;
+         std::chrono::steady_clock::time_point pacingDeadline{};
+         {
+@@ -2071,8 +2110,14 @@ void EeScheduler::updateNextDeadline()
+     if (m_deadlines.empty())
+     {
+         m_nextDeadlineCycle.store(0u, std::memory_order_release);
++        m_nextDeadlineHostTicks.store(0, std::memory_order_release);
+         return;
+     }
++    const auto earliestHost = std::min_element(m_deadlines.begin(), m_deadlines.end(),
++                                               [](const ScheduledEvent &left, const ScheduledEvent &right)
++                                               { return left.hostDeadline < right.hostDeadline; });
++    m_nextDeadlineHostTicks.store(std::max<int64_t>(1, earliestHost->hostDeadline.time_since_epoch().count()),
++                                  std::memory_order_release);
+     const auto it = std::min_element(m_deadlines.begin(), m_deadlines.end(),
+                                      [](const ScheduledEvent &left, const ScheduledEvent &right)
+                                      {

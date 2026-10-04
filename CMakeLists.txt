@@ -13,6 +13,7 @@ set(KESSEN2_GENERATED_DIR "${CMAKE_SOURCE_DIR}/generated" CACHE PATH
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 include(K2Modules)
+include(K2PatchedPs2Recomp)
 set(K2_GENERATED_DIR "${KESSEN2_GENERATED_DIR}")
 
 # Only the default generated/ is git-ignored and guarded; refuse any other in-tree location.
@@ -63,9 +64,10 @@ if(KESSEN2_WITH_PS2RECOMP)
     set(PS2X_BUILD_ANALYZER OFF CACHE BOOL "" FORCE)
     set(PS2X_BUILD_TEST OFF CACHE BOOL "" FORCE)
     set(PS2X_BUILD_STUDIO OFF CACHE BOOL "" FORCE)
-    # EXCLUDE_FROM_ALL: only what our targets link gets built (not ps2EntryRunner,
-    # which globs generated code from inside the submodule — see ADR-0004).
-    add_subdirectory("${_ps2recomp_dir}" external/PS2Recomp EXCLUDE_FROM_ALL)
+    # Applies patches/ps2recomp/series to an export of the pinned commit (never the
+    # submodule itself). EXCLUDE_FROM_ALL: only what our targets link gets built (not
+    # ps2EntryRunner, which globs generated code from inside the submodule — see ADR-0004).
+    k2_add_patched_ps2recomp("${_ps2recomp_dir}" "${CMAKE_SOURCE_DIR}/patches/ps2recomp/series")
     k2_register_guarded(ps2_runtime)
 endif()
 

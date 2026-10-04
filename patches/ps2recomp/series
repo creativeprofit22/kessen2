@@ -1,0 +1,12 @@
+# PS2Recomp patches applied at configure time, in this order (see README.md).
+# One patch filename per line; `#` starts a comment. No globbing: a patch in this
+# directory that is not listed here is proposed-only and never applied.
+0002-iop-trace.patch
+0003-iop-shared-sysmem-pool.patch
+0004-cd-read-iopm-to-iop-ram.patch
+0005-mpeg-stream-type-values.patch
+0006-runtime-internal-heap.patch
+0007-ee-events-follow-host-time.patch
+0008-ipu-to-dma-drains.patch
+0009-mpeg-nodata-callback.patch
+0010-mpeg-create-resets-status.patch

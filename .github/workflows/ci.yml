@@ -19,6 +19,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
+        with:
+          submodules: recursive
 
       # Keeps copyrighted disc content out of the public repo.
       - name: Guard against committed game data
@@ -37,6 +39,21 @@ jobs:
           cmake -DFIXTURE_DIR=tests/cmake/dep_violation
           -DWORK_DIR=${{ runner.temp }}/k2dv
           -P tests/cmake/run_dep_violation.cmake
+
+      # Fails fast when a patch listed in patches/ps2recomp/series no longer applies
+      # to the pinned submodule (configure would fail the same way, much later).
+      # Patches stack, so apply them in order to an export, as configure does.
+      - name: PS2Recomp patches apply
+        run: |
+          export_dir="${{ runner.temp }}/ps2recomp-patched"
+          mkdir -p "$export_dir"
+          git -c core.autocrlf=false -C external/PS2Recomp archive --format=tar HEAD | tar -x -C "$export_dir"
+          while read -r line || [ -n "$line" ]; do
+            p=$(printf '%s' "${line%%#*}" | tr -d '[:space:]')
+            [ -z "$p" ] && continue
+            echo "applying $p"
+            GIT_CEILING_DIRECTORIES="$export_dir" git -C "$export_dir" apply "$GITHUB_WORKSPACE/patches/ps2recomp/$p"
+          done < patches/ps2recomp/series
 
   build-windows:
     # windows-latest ships VS 2026 since June 2026; the msvc-x64 preset targets VS 2022.

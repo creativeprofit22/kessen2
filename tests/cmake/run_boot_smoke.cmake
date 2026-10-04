@@ -14,6 +14,9 @@ endforeach()
 # Trace switches change the applied-fix count and flood the log; keep the run canonical.
 unset(ENV{K2_TRACE_FUNCS})
 unset(ENV{K2_TRACE_CD})
+unset(ENV{PS2X_IOP_TRACE})
+unset(ENV{PS2X_IOP_TRACE_LIBS})
+unset(ENV{PS2X_IOP_TRACE_MAX})
 
 execute_process(
     COMMAND "${KESSEN2_EXE}" --headless --frames "${FRAMES}" --timeout-s "${TIMEOUT_S}"

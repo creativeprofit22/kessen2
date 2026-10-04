@@ -1,0 +1,18 @@
+diff --git a/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.cpp b/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.cpp
+index 44eaef4..21f2c44 100644
+--- a/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.cpp
++++ b/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.cpp
+@@ -551,9 +551,11 @@ namespace ps2_stubs
+         // TODO this resolution should follow runtime resolution
+         constexpr uint32_t kStubMovieWidth = 320u;
+         constexpr uint32_t kStubMovieHeight = 240u;
++        // sceMpegStrType values from libmpeg: M2V = 0, IPU = 1, PCM = 2, ADPCM = 3, DATA = 4.
++        // Games register their movie-audio callback with sceMpegStrADPCM (3).
+         constexpr uint32_t kMpegStrM2V = 0u;
+-        constexpr uint32_t kMpegStrPCM = 1u;
+-        constexpr uint32_t kMpegStrADPCM = 2u;
++        constexpr uint32_t kMpegStrPCM = 2u;
++        constexpr uint32_t kMpegStrADPCM = 3u;
+         constexpr uint8_t kMpegPackHeader = 0xBAu;
+         constexpr uint8_t kMpegSystemHeader = 0xBBu;
+         constexpr uint8_t kMpegProgramEnd = 0xB9u;

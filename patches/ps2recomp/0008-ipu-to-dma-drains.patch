@@ -1,0 +1,119 @@
+diff --git a/ps2xRuntime/include/runtime/ps2_memory.h b/ps2xRuntime/include/runtime/ps2_memory.h
+index ea86a9c..9c61fe5 100644
+--- a/ps2xRuntime/include/runtime/ps2_memory.h
++++ b/ps2xRuntime/include/runtime/ps2_memory.h
+@@ -450,6 +450,7 @@ public:
+ 
+     std::array<EeTimer, 4> m_eeTimers{};
+     bool tryProcessScratchpadDma(uint32_t channelBase, uint32_t chcr);
++    bool tryProcessIpuToDma(uint32_t channelBase, uint32_t chcr);
+     void completeDmacChannel(uint32_t channelBase, uint32_t cause);
+     void queueCompletedDmacCause(uint32_t cause);
+ };
+diff --git a/ps2xRuntime/src/lib/ps2_memory.cpp b/ps2xRuntime/src/lib/ps2_memory.cpp
+index 37b6a4d..e2712a5 100644
+--- a/ps2xRuntime/src/lib/ps2_memory.cpp
++++ b/ps2xRuntime/src/lib/ps2_memory.cpp
+@@ -1311,6 +1311,11 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
+                 return true;
+             }
+ 
++            if (tryProcessIpuToDma(channelBase, value))
++            {
++                return true;
++            }
++
+             if ((channelBase == 0x1000A000u || channelBase == 0x10009000u || channelBase == 0x10008000u) && (m_gsVRAM || channelBase == 0x10008000u))
+             {
+                 auto enqueueTransfer = [&](uint32_t srcAddr, uint32_t qwCount)
+@@ -1643,6 +1648,90 @@ bool PS2Memory::tryProcessScratchpadDma(uint32_t channelBase, uint32_t chcr)
+     return true;
+ }
+ 
++// The IPU is not emulated: sceMpeg* is high-level and decodes from the demuxed stream.
++// A toIPU (channel 4) transfer is therefore drained at once: MADR/TADR/QWC advance as if
++// the IPU had consumed every tag, STR clears and the channel completes. Games that feed
++// their own IPU ring and track its progress through D4_MADR/CHCR.STR then see it drain
++// instead of waiting forever.
++bool PS2Memory::tryProcessIpuToDma(uint32_t channelBase, uint32_t chcr)
++{
++    static constexpr uint32_t kIpuToChannel = 0x1000B400u;
++    static constexpr uint32_t kIpuToCause = 4u;
++    static constexpr int kMaxChainTags = 4096;
++    if (channelBase != kIpuToChannel)
++        return false;
++
++    uint32_t madr = m_ioRegisters[channelBase + 0x10u];
++    const uint32_t qwc = m_ioRegisters[channelBase + 0x20u] & 0xFFFFu;
++    uint32_t tadr = m_ioRegisters[channelBase + 0x30u];
++    uint32_t lastTagUpper = chcr >> 16u;
++    madr += qwc * 16u;
++
++    if (((chcr >> 2u) & 0x3u) == 1u) // source chain
++    {
++        const bool tieEnabled = (chcr & (1u << 7u)) != 0u;
++        for (int i = 0; i < kMaxChainTags; ++i)
++        {
++            const bool tagInScratchpad = isScratchpad(tadr);
++            const uint32_t tagPhys = translateAddress(tadr);
++            const uint8_t *tagBase = tagInScratchpad ? m_scratchpad : m_rdram;
++            const uint32_t tagMax = tagInScratchpad ? PS2_SCRATCHPAD_SIZE : PS2_RAM_SIZE;
++            if (tagPhys > tagMax - 16u)
++                break;
++
++            uint64_t tag = 0u;
++            std::memcpy(&tag, tagBase + tagPhys, sizeof(tag));
++            const uint32_t tagQwc = static_cast<uint32_t>(tag & 0xFFFFu);
++            const uint32_t id = static_cast<uint32_t>((tag >> 28u) & 0x7u);
++            const bool irq = ((tag >> 31u) & 0x1u) != 0u;
++            const uint32_t addr = static_cast<uint32_t>((tag >> 32u) & 0x7FFFFFFFu);
++            lastTagUpper = static_cast<uint32_t>((tag >> 16u) & 0xFFFFu);
++
++            uint32_t dataAddr = 0u;
++            bool endChain = false;
++            switch (id)
++            {
++            case 0u: // refe
++                dataAddr = addr;
++                tadr += 16u;
++                endChain = true;
++                break;
++            case 1u: // cnt
++                dataAddr = tadr + 16u;
++                tadr = dataAddr + tagQwc * 16u;
++                break;
++            case 2u: // next
++                dataAddr = tadr + 16u;
++                tadr = addr;
++                break;
++            case 3u: // ref
++            case 4u: // refs
++                dataAddr = addr;
++                tadr += 16u;
++                break;
++            case 7u: // end
++                dataAddr = tadr + 16u;
++                endChain = true;
++                break;
++            default: // call/ret are not valid for a source channel without a stack
++                dataAddr = tadr + 16u;
++                endChain = true;
++                break;
++            }
++            madr = dataAddr + tagQwc * 16u;
++            if (endChain || (irq && tieEnabled))
++                break;
++        }
++    }
++
++    m_ioRegisters[channelBase + 0x10u] = madr;
++    m_ioRegisters[channelBase + 0x20u] = 0u;
++    m_ioRegisters[channelBase + 0x30u] = tadr;
++    m_ioRegisters[channelBase] = (chcr & 0x0000FFFFu) | (lastTagUpper << 16u);
++    completeDmacChannel(channelBase, kIpuToCause);
++    return true;
++}
++
+ void PS2Memory::completeDmacChannel(uint32_t channelBase, uint32_t cause)
+ {
+     static constexpr uint32_t kDStat = 0x1000E010u;
