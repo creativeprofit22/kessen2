@@ -7,6 +7,10 @@ Generic fixes found during Kessen II bring-up that belong in [ran-j/PS2Recomp](h
 
 Configure **fails hard** (naming the patch) if a listed patch does not apply to the pinned commit, and also if the submodule is not at the superproject's pinned commit or has local changes. CI's `check` job applies every `series` entry in order to a `git archive` export of the pin, the same way. An empty `series` builds the submodule directly.
 
+## No temporary edits in the build copy
+
+Never hand-edit `<build>/_deps/ps2recomp-patched/src`, not even for a quick diagnostic: the next reconfigure re-exports the tree and silently wipes the edit, and no one else can reproduce it. To observe the game, use a probe file (`probes/`, `K2_PROBE`, [ADR-0006](../../docs/adr/0006-probe-diagnostics.md)); for anything a probe cannot do, add a numbered patch here. `tools/guard/check-forbidden.sh` rejects the old `K2DIAG` marker in that tree and in tracked files.
+
 ## Adding a patch
 
 1. Make the change in a scratch copy of the pinned commit, never in `external/PS2Recomp` (e.g. `git -C external/PS2Recomp worktree add ../../work/ps2recomp-scratch HEAD`, edit, `git -C work/ps2recomp-scratch diff > patches/ps2recomp/NNNN-name.patch`, then `git -C external/PS2Recomp worktree remove ../../work/ps2recomp-scratch`). Patches must apply in `series` order, so make later patches on top of earlier ones.

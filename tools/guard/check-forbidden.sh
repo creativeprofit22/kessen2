@@ -12,13 +12,16 @@
 #   (b) content magic: ELF, ISO9660, PS2 memory card
 #   (c) files larger than 20 MB
 #   (d) generated-code includes in platform/, render/, runtime-ext/
+#   (e) the temporary-diagnostic marker (see AGENTS.md) in tracked code, patches, CMake and
+#       scripts, and anywhere in the engine build copy out/build/*/_deps/ps2recomp-patched/src
+#       when it exists: use a probe file (probes/) or a numbered patch instead
 # POSIX sh + git + coreutils only (works in Git for Windows' hook shell and Linux CI).
 set -eu
 
 mode=${1:---staged}
 case "$mode" in
     --staged|--all) ;;
-    -h|--help) sed -n '2,15p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,18p' "$0"; exit 0 ;;
     *) echo "usage: $0 [--staged|--all]" >&2; exit 2 ;;
 esac
 
@@ -26,6 +29,9 @@ top=$(git rev-parse --show-toplevel)
 cd "$top"
 
 MAX_BYTES=20971520   # 20 MB
+# Built from pieces so this file does not match itself. Whole word, any case: "[MARKER]" and
+# "// MARKER" match, identifiers such as "marker_test" do not.
+MARKER="K2""DIAG"
 tmp=$(mktemp "${TMPDIR:-/tmp}/k2guard.XXXXXX")
 trap 'rm -f "$tmp"' EXIT HUP INT TERM
 
@@ -102,7 +108,28 @@ while IFS= read -r path; do
                     fi ;;
             esac ;;
     esac
+
+    # (e) temporary-diagnostic marker in code, patches, CMake and scripts
+    case "$lower" in
+        *.md|tools/guard/*) ;;
+        *.c|*.cc|*.cpp|*.cxx|*.h|*.hh|*.hpp|*.hxx|*.inl|*.ipp|*.patch|*.diff|*.cmake|*/cmakelists.txt|cmakelists.txt|*.sh|*.py|*.ps1|*.yml|*.yaml|*.json|*.probe|series)
+            if git cat-file blob ":$path" | grep -Eiqw "$MARKER"; then
+                report "$path" "temporary diagnostic marker $MARKER (use a probe or a numbered patch)"
+            fi ;;
+    esac
 done < "$tmp"
+
+# (e) the engine build copy must not carry hand-edited diagnostics either
+for src in out/build/*/_deps/ps2recomp-patched/src; do
+    [ -d "$src" ] || continue
+    hits=$(grep -rEilw --include='*.c' --include='*.cc' --include='*.cpp' --include='*.h' \
+        --include='*.hpp' --include='*.inl' "$MARKER" "$src" 2>/dev/null | head -n 5 || true)
+    if [ -n "$hits" ]; then
+        for hit in $hits; do
+            report "$hit" "temporary diagnostic marker $MARKER in the engine build copy (use a probe or a numbered patch)"
+        done
+    fi
+done
 
 if [ "$fail" -ne 0 ]; then
     echo "check-forbidden: blocked. Game data and generated code must never enter this public repo (docs/LEGAL.md)." >&2

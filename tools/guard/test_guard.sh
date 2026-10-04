@@ -58,6 +58,18 @@ mkdir -p analysis; printf 'x = 1\n' > analysis/kessen2.toml; stage analysis/kess
 mkdir -p analysis/out/reports; printf 'a,b\n' > analysis/out/reports/x.csv
                                                           stage analysis/out/reports/x.csv; expect fail "analysis/out/ derived output"
 
+M="K2""DIAG"   # the temporary-diagnostic marker, split so this file does not match itself
+mkdir -p runtime-ext/src
+printf '// %s dump frames\nint x;\n' "$M" > runtime-ext/src/d.cpp
+                                                          stage runtime-ext/src/d.cpp; expect fail "diagnostic marker in C++"
+mkdir -p patches
+printf '+    fprintf(stderr, "[%s] x\\n");\n' "$(printf '%s' "$M" | tr 'A-Z' 'a-z')" > patches/0099-x.patch
+                                                          stage patches/0099-x.patch; expect fail "diagnostic marker in a patch (lower case)"
+printf 'message(%s)\n' "$M" > CMakeLists.txt;            stage CMakeLists.txt; expect fail "diagnostic marker in CMake"
+mkdir -p out/build/x/_deps/ps2recomp-patched/src/lib
+printf '/* %s */\n' "$M" > out/build/x/_deps/ps2recomp-patched/src/lib/gs.cpp
+printf '# hello\n' > README.md;                           stage README.md;   expect fail "diagnostic marker in the engine build copy (untracked)"
+
 mkdir -p generated platform/src
 printf '# generated\n' > generated/README.md
 printf '# hello\n' > README.md
@@ -69,6 +81,11 @@ printf '# analysis\n' > analysis/README.md
 printf '#!/bin/sh\n' > analysis/run-analysis.sh
 printf 'class K2Report {}\n' > analysis/ghidra/K2Report.java
 stage analysis/README.md analysis/run-analysis.sh analysis/ghidra/K2Report.java; expect pass "analysis scripts and docs"
+
+mkdir -p diag/tests docs
+printf 'add_test(NAME %s_test_probe_spec)\n' "$(printf '%s' "$M" | tr 'A-Z' 'a-z')" > diag/tests/CMakeLists.txt
+printf 'The %s marker is forbidden.\n' "$M" > docs/rules.md
+stage diag/tests/CMakeLists.txt docs/rules.md;                                expect pass "marker as identifier prefix, and in docs"
 
 if [ "$failures" -ne 0 ]; then
     echo "test_guard: $failures case(s) failed" >&2
