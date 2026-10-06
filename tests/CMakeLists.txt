@@ -26,9 +26,12 @@ endif()
 # (neither exists in CI). Run alone with: ctest --preset msvc-x64 -L boot
 set(K2_BOOT_ELF "${CMAKE_SOURCE_DIR}/work/disc/SLUS-20275/iso/SLUS_202.75" CACHE FILEPATH
     "Boot ELF used by the k2_boot_smoke test")
-# The main overlay load is first printed between frames 500 and 525 (Debug build); 900 leaves
-# margin. The driver script also requires the boot milestone lines, see run_boot_smoke.cmake.
-set(K2_BOOT_SMOKE_FRAMES 900 CACHE STRING "Frames k2_boot_smoke must present")
+# The main overlay load is bimodal in the Debug build: about frame 490-620 in most runs, about
+# 1,040 in roughly a third, where the game's boot busy-loops (0x155B60 spin delay, 0x13F508
+# heap-size probe) run about half as fast against real-time frames (measured 2026-10-06).
+# 1,500 covers both with margin. The driver script also requires the boot milestone lines, see
+# run_boot_smoke.cmake.
+set(K2_BOOT_SMOKE_FRAMES 1500 CACHE STRING "Frames k2_boot_smoke must present")
 if(TARGET k2_generated AND EXISTS "${K2_BOOT_ELF}")
     add_test(NAME k2_boot_smoke
         COMMAND "${CMAKE_COMMAND}"
