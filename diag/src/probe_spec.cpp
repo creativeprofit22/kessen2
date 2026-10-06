@@ -196,7 +196,36 @@ struct Parser {
     Result attrib(std::span<const std::string_view> args);
     Result max_events(std::span<const std::string_view> args);
     Result screenshot(std::span<const std::string_view> args);
+    Result gsregs(std::span<const std::string_view> args);
+    Result gsevents(std::span<const std::string_view> args);
 };
+
+// every=N (required, >= 1) and optional from=F, shared by frame-scheduled directives.
+std::expected<std::pair<std::uint32_t, std::uint32_t>, std::string>
+parse_schedule(std::span<const std::string_view> args, std::string_view name)
+{
+    const auto opts = Options::parse(args, {"every", "from"});
+    if (!opts) {
+        return std::unexpected(opts.error());
+    }
+    const auto *every = opts->get("every");
+    if (every == nullptr) {
+        return std::unexpected(std::string(name) + " needs every=N");
+    }
+    const auto n = parse_count(*every, "every", 1, 0xFFFFFFFFu);
+    if (!n) {
+        return std::unexpected(n.error());
+    }
+    std::uint32_t from = 0;
+    if (const auto *v = opts->get("from")) {
+        const auto f = parse_count(*v, "from", 0, 0xFFFFFFFFu);
+        if (!f) {
+            return std::unexpected(f.error());
+        }
+        from = *f;
+    }
+    return std::pair{*n, from};
+}
 
 Result Parser::directive(std::string_view name, std::span<const std::string_view> args)
 {
@@ -230,6 +259,12 @@ Result Parser::directive(std::string_view name, std::span<const std::string_view
     }
     if (name == "screenshot") {
         return screenshot(args);
+    }
+    if (name == "gsregs") {
+        return gsregs(args);
+    }
+    if (name == "gsevents") {
+        return gsevents(args);
     }
     return std::unexpected("unknown directive " + quoted(name));
 }
@@ -381,28 +416,37 @@ Result Parser::screenshot(std::span<const std::string_view> args)
     if (spec.screenshot) {
         return std::unexpected("only one screenshot directive is allowed");
     }
-    const auto opts = Options::parse(args, {"every", "from"});
-    if (!opts) {
-        return std::unexpected(opts.error());
+    const auto schedule = parse_schedule(args, "screenshot");
+    if (!schedule) {
+        return std::unexpected(schedule.error());
     }
-    const auto *every = opts->get("every");
-    if (every == nullptr) {
-        return std::unexpected("screenshot needs every=N");
+    spec.screenshot = ScreenshotProbe{.every = schedule->first, .from = schedule->second};
+    return {};
+}
+
+Result Parser::gsregs(std::span<const std::string_view> args)
+{
+    if (spec.gsregs) {
+        return std::unexpected("only one gsregs directive is allowed");
     }
-    ScreenshotProbe probe;
-    const auto n = parse_count(*every, "every", 1, 0xFFFFFFFFu);
-    if (!n) {
-        return std::unexpected(n.error());
+    const auto schedule = parse_schedule(args, "gsregs");
+    if (!schedule) {
+        return std::unexpected(schedule.error());
     }
-    probe.every = *n;
-    if (const auto *v = opts->get("from")) {
-        const auto f = parse_count(*v, "from", 0, 0xFFFFFFFFu);
-        if (!f) {
-            return std::unexpected(f.error());
-        }
-        probe.from = *f;
+    spec.gsregs = GsRegsProbe{.every = schedule->first, .from = schedule->second};
+    return {};
+}
+
+Result Parser::gsevents(std::span<const std::string_view> args)
+{
+    if (spec.gsevents) {
+        return std::unexpected("only one gsevents directive is allowed");
     }
-    spec.screenshot = probe;
+    const auto schedule = parse_schedule(args, "gsevents");
+    if (!schedule) {
+        return std::unexpected(schedule.error());
+    }
+    spec.gsevents = GsEventsProbe{.every = schedule->first, .from = schedule->second};
     return {};
 }
 

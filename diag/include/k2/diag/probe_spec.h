@@ -60,6 +60,20 @@ struct ScreenshotProbe {
     std::uint32_t from = 0;
 };
 
+// Logs the GS privileged display registers and the presenter's chosen source, same schedule
+// rules as ScreenshotProbe.
+struct GsRegsProbe {
+    std::uint32_t every = 0;
+    std::uint32_t from = 0;
+};
+
+// Dumps the GS draw and image-transfer events recorded since the previous dump (the engine keeps
+// the last 512 GS events), same schedule rules as ScreenshotProbe.
+struct GsEventsProbe {
+    std::uint32_t every = 0;
+    std::uint32_t from = 0;
+};
+
 struct ProbeSpec {
     std::vector<FuncProbe> funcs;    // in file order
     std::optional<ArmProbe> arm;
@@ -67,10 +81,12 @@ struct ProbeSpec {
     std::vector<Range> attrib;       // sorted by address
     std::uint32_t attrib_max_events = Limits::kDefaultAttribEvents;
     std::optional<ScreenshotProbe> screenshot;
+    std::optional<GsRegsProbe> gsregs;
+    std::optional<GsEventsProbe> gsevents;
 
     [[nodiscard]] bool empty() const
     {
-        return funcs.empty() && watches.empty() && attrib.empty() && !screenshot;
+        return funcs.empty() && watches.empty() && attrib.empty() && !screenshot && !gsregs && !gsevents;
     }
 };
 

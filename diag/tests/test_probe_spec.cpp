@@ -44,7 +44,9 @@ void valid_full_spec()
                                     "watch 0x1000:4\n"
                                     "attrib 0x1595:34\r\n"
                                     "attrib-max-events 100000\n"
-                                    "screenshot every=150 from=30\n");
+                                    "screenshot every=150 from=30\n"
+                                    "gsregs every=600 from=1200\n"
+                                    "gsevents every=1 from=2400\n");
     if (!check(r.has_value(), "full spec parses")) {
         std::fprintf(stderr, "  error: %s\n", k2::diag::to_string(r.error()).c_str());
         return;
@@ -64,6 +66,8 @@ void valid_full_spec()
           "attrib length is hex");
     check(r->attrib_max_events == 100000, "attrib-max-events");
     check(r->screenshot && r->screenshot->every == 150 && r->screenshot->from == 30, "screenshot");
+    check(r->gsregs && r->gsregs->every == 600 && r->gsregs->from == 1200, "gsregs");
+    check(r->gsevents && r->gsevents->every == 1 && r->gsevents->from == 2400, "gsevents");
 }
 
 void valid_limits_exactly()
@@ -139,6 +143,11 @@ void malformed_specs()
         {"attrib-max-events twice", spec("attrib 0x1000:4\nattrib-max-events 1\nattrib-max-events 2\n"), 4, "twice"},
         {"screenshot without every", spec("screenshot from=5\n"), 2, "every=N"},
         {"screenshot twice", spec("screenshot every=1\nscreenshot every=2\n"), 3, "only one"},
+        {"gsregs without every", spec("gsregs from=5\n"), 2, "gsregs needs every=N"},
+        {"gsregs every zero", spec("gsregs every=0\n"), 2, "every must be in"},
+        {"gsregs twice", spec("gsregs every=1\ngsregs every=2\n"), 3, "only one gsregs"},
+        {"gsevents without every", spec("gsevents from=5\n"), 2, "gsevents needs every=N"},
+        {"gsevents twice", spec("gsevents every=1\ngsevents every=2\n"), 3, "only one gsevents"},
         {"control character", spec("func 0x1000\x01\n"), 2, "control character"},
         {"non-ASCII", spec("func 0x1000 \xC3\xA9\n"), 2, "non-ASCII"},
         {"too large", spec(std::string(Limits::kMaxFileBytes, '#')), 0, "64 KiB"},

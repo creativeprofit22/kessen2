@@ -19,6 +19,8 @@ watch 0x1113320:4 every=600                 # ADDR:LEN, LEN hex, multiple of 4, 
 attrib 0x11ef480:4                          # write attribution, LEN hex, <= 0x1000 total
 attrib-max-events 100000
 screenshot every=150 from=0
+gsregs every=600 from=0                     # GS display registers + presenter choice
+gsevents every=1 from=2400                  # GS draws/uploads since the last dump
 ```
 
 All numbers in addresses and lengths are hex (`0x` optional); counts (`calls`, `nonzero`, `after`, `every`, `from`, `attrib-max-events`) are decimal.
@@ -39,6 +41,8 @@ One line per event, `frame=F seq=N kind=K key=value…` (`frame` = presented fra
 | `last-write` | end of run | per-byte last writer, in address order: `addr old new writer=FN\|unattributed [site=PC] edge=enter\|exit at_frame=F`; `at_frame` is the frame the write was seen, the line's own `frame=` is the end of the run |
 | `attrib-stats` | end of run | totals: `changes events unattributed resyncs truncated=0\|1` |
 | `screenshot` | `screenshot` | `file` |
+| `gsevents` | `gsdraw` / `gsxfer` | one line per GS draw (`prim tme verts fbp fbw tbp0 tbw tpsm tw th x y` ranges) or image transfer (`dir dbp dbw dpsm dsa rr pixels`) recorded since the previous dump; the engine keeps only the last 512 GS events, so dump every frame for busy scenes |
+| `gsregs` | `gsregs` | `pmode smode2 dispfb1 display1 dispfb2 display2` (raw 64-bit), then the presenter's last pick: `present_fbp source_fbp preferred=0\|1 w h`, and rows of that latched frame with any non-black pixel: `latched=0\|1 lit_rows lit_first lit_last` |
 | `end` | end of run | — |
 
 "Who last wrote ADDR before frame F": `python tools/probe/reverse_watch.py --address 1113320:4 --before-frame 1200 --repeat 2`.
