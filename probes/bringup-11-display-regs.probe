@@ -1,0 +1,76 @@
+# BRINGUP #11 (open): which display settings does the game ask for? Logs the arguments of the
+# sceGs display calls (stubbed by the engine), so we can check whether it runs interlaced FRAME
+# mode (ffmode=1) with a 448-line DISPLAY.DH - the case the engine's presenter reads at full height.
+# 0x100238 sceGsResetGraph(mode a0, interlace a1, omode a2, ffmode a3)
+# 0x1012a0 sceGsSetDefDBuffDc(env a0, psm a1, w a2, h a3)
+# 0x1006b0 sceGsPutDispEnv(env a0)          - env address; watch it in a follow-up run
+# 0x101588 sceGsSwapDBuffDc(env a0, field a1)
+# Seen 2026-10-06 (Release, 5,000 frames): ResetGraph(0, interlace=1, NTSC=2, ffmode=0 FIELD) at
+# frame 156; SetDefDBuffDc(env=0x599430, PSMCT32, 640, 448) at 157; PutDispEnv never called;
+# SwapDBuffDc alternates field 0/1 from frame 218 (512+ calls). Frame 4,800 still shows #11.
+# Env block, same at frames 600 and 4,800: PMODE 0x8027, SMODE2 0x1 (interlace, FIELD);
+# DISPFB disp[0] FBP 0x118, disp[1] FBP 0x15E, FBW 10, PSMCT32 - 70 pages = 224 rows apart (not
+# the 0 / zbuf pair the engine stub writes, so the game rewrites them); DISPLAY DX 636 DY 32
+# MAGH 0 DW 639 DH 447 (the stub's value). 448 rows read from a 224-row buffer = both buffers
+# stacked, matching the screenshot.
+# Tried 2026-10-06: presenter reads (DH+1)/2 rows per field + line-double. Unit test passed, but
+# the game went fully black at 1,200-4,800 (movie counter still advancing) - so the picture is
+# NOT in rows 0-223 of the in-memory DISPFB. Patch withdrawn. Next: log the GS privileged
+# registers the presenter actually uses (DISPFB1/2, DISPLAY1/2, PMODE), not this RAM copy.
+# gsregs, unpatched engine, frames 600-4,800 (stable apart from FBP flipping 0x118/0x15E):
+# PMODE 0x8027 = both read circuits on, alpha-blended at 0x80; SMODE2 0x1 = interlace, FIELD.
+# DISPFB1 FBP=cur FBW=10 DBY=1; DISPFB2 FBP=cur DBY=0 - same buffer, one line apart (flicker
+# filter). DISPLAY1 DH=446, DISPLAY2 DH=447, DX 636 DY 32 DW 639. Presenter: source = current
+# FBP, w=640 h=448. So it reads 448 rows of a 224-row buffer: confirms the stacking. The
+# withdrawn half-height patch going black is therefore a bug in that patch, not the theory.
+# Retried with lit-row counts (gsregs lit_rows): with the half-height read, buffer 0x118 rows
+# 0-223 are black every sample and 0x15E rows 0-223 hold the movie. Unpatched, 0x118 at 448
+# rows shows 0x15E's field in its lower half, and 0x15E shows 0x15E + 0x1A4 = two copies. The
+# draw context reported FBP 0x15E at every sample. Leading theory: the displayed buffers
+# (0x118/0x15E) sit one field (70 pages) below where the movie is drawn (0x15E/0x1A4?). The
+# engine's SetDefDBuffDc stub seeds disp[0] at the zbuf address and disp[1] at 0, unlike the
+# SDK. Not yet proven: the draw-side FBP needs logging every swap, not every 600 frames.
+# Per-frame window 2380-2410 (gsregs every=1): shown and draw buffers always differ (normal
+# double buffering), so the "wrong buffer" theory is OUT. Instead the picture (~168 rows)
+# lands at rows 224-447 of a 448-row read: it spills past the 224-row buffer into the next.
+# Draw env is the engine stub's 448-tall one (scissor 0..447, OFY 1824 = 2048-448/2, seeded by
+# seedGsDrawEnv1 with h=448) while the game spaces buffers 224 rows apart. Next suspect:
+# drawing setup height, not presentation.
+# Checked against the game's own (replaced) library code in the ELF: sceGsSetDefDrawEnv
+# @0x100838 also uses scissor h-1 and OFY 2048-h/2, and sceGsSetDefDBuffDc @0x1012a0 calls it
+# with the full h=448 - so the engine stub's 448-tall draw env matches the real SDK. Theory OUT.
+# The real DBuffDc only respaces buffers (half the zbufaddr page count) when interlace+FRAME
+# or non-interlaced; in FIELD mode it leaves them, and the game sets 0x118/0x15E itself.
+# Open: how a working PS2 shows a 448-tall draw into 224-row-spaced FIELD buffers - i.e. how
+# DISPLAY.DH and FFMD=0 really read. Needs a primary hardware reference, not more guessing.
+# Answered by PCSX2 GSState.cpp SetRects (@81526d4d, ~L7349-7356): FIELD mode reads the full
+# DH+1 = 448 rows; only FRAME mode (FFMD=1) halves the read. So the engine's 448-row read is
+# RIGHT and the withdrawn half-height patch was backwards (why it went black). Presentation
+# is cleared. New lead: each buffer holds a ~168-row picture - about half of a 336-row
+# letterboxed movie - so the movie is drawn at HALF HEIGHT, and two of them fit in 448 rows.
+# Next: find how the movie frame reaches VRAM (IMAGE upload or textured sprite) and its height.
+# gsevents, frames 2399-2406: the movie is IMAGE-uploaded as 16x16 blocks straight into the
+# display buffers (DBP 0x2300 = FBP 0x118, DBP 0x2BC0 = FBP 0x15E), rows 56..391 - full 336-row
+# height, after a 640x448 clear sprite. The 448-row buffers start only 70 pages apart, so they
+# overlap by half: that IS the stacking. Cause, from the game's own code: 0x14D348..0x14D3C4 sets
+# buffer B = ZBUF.ZBP + pages(640, 448, ZBUF.PSM) via 0x14D460 (16-bit Z halves h -> 70 pages),
+# i.e. it places B right after the depth buffer. 0x118 is the DEPTH buffer address. The engine's
+# sceGsSetDefDBuffDc stub (GS.cpp, fbp1 = zbufAddr) puts display buffer A / draw env 1 on the
+# depth buffer; the SDK's SetDefDispEnv/SetDefDrawEnv leave them at FBP 0. Real layout: A 0..139,
+# Z 0x118.., B 0x15E.. - no overlap. Fix candidate: stub seeds A (disp[0], draw1x) at FBP 0.
+# FIXED 2026-10-06 by 0012-dbuffdc-display0-at-fbp0.patch: gsregs shows one picture, rows
+# ~56-391, at every sample from 1,200 to 4,800; screenshots show the credit and FMV whole.
+# Run: K2_PROBE=probes/bringup-11-display-regs.probe kessen2 --headless --frames 5000
+k2probe 1
+func 0x100238 calls=8                # sceGsResetGraph
+func 0x1012a0 calls=8                # sceGsSetDefDBuffDc
+func 0x1006b0 calls=16               # sceGsPutDispEnv
+func 0x101588 calls=16               # sceGsSwapDBuffDc
+watch 0x599430:28 every=600          # DBuffDc disp[0]: PMODE SMODE2 DISPFB DISPLAY BGCOLOR (u64 each)
+watch 0x599458:28 every=600          # DBuffDc disp[1]
+watch 0x1113320:4 every=600          # movie frame counter
+attrib 0x599440:8                    # disp[0].DISPFB - who writes the 224-row buffer layout
+attrib 0x599468:8                    # disp[1].DISPFB
+attrib-max-events 2000
+screenshot every=600 from=1200
+gsregs every=600 from=600            # privileged DISPFB/DISPLAY the presenter really uses

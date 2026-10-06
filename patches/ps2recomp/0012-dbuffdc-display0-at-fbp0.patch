@@ -1,0 +1,123 @@
+diff --git a/ps2xRuntime/src/lib/Kernel/Stubs/GS.cpp b/ps2xRuntime/src/lib/Kernel/Stubs/GS.cpp
+index ea674c0..50b38c4 100644
+--- a/ps2xRuntime/src/lib/Kernel/Stubs/GS.cpp
++++ b/ps2xRuntime/src/lib/Kernel/Stubs/GS.cpp
+@@ -903,9 +903,15 @@ namespace ps2_stubs
+             zbufAddr = getRegU32(&temp, 2);
+         }
+ 
+-        const uint32_t fbp1 = zbufAddr;
+-        const uint64_t dispfb0 = makeDispFb(fbp1, fbw, psm, 0u, 0u);
+-        const uint64_t dispfb1 = makeDispFb(0u, fbw, psm, 0u, 0u);
++        // Matches libgraph sceGsSetDefDBuffDc: display 0 / draw env 1 sit at FBP 0. Display 1 /
++        // draw env 0 also sit at 0 in interlaced FIELD mode (the game places that buffer itself);
++        // otherwise they start half a w x h buffer in. FBP 0 must not alias the depth buffer.
++        const bool fieldMode = (g_gparam.interlace & 0x1u) != 0u && (g_gparam.ffmode & 0x1u) == 0u;
++        const uint32_t heightBlocks = (psm & 0x2u) != 0u ? (h + 63u) / 64u : (h + 31u) / 32u;
++        const uint32_t fbpA = 0u;
++        const uint32_t fbpB = fieldMode ? 0u : (fbw * heightBlocks) / 2u;
++        const uint64_t dispfb0 = makeDispFb(fbpA, fbw, psm, 0u, 0u);
++        const uint64_t dispfb1 = makeDispFb(fbpB, fbw, psm, 0u, 0u);
+ 
+         GsDBuffDcMem db{};
+         db.disp[0].pmode = pmode;
+@@ -918,11 +924,11 @@ namespace ps2_stubs
+ 
+         const bool seedClear = clear != 0u;
+         db.giftag0 = {makeGiftagAplusD(seedClear ? 22u : 16u), 0xEULL};
+-        seedGsDrawEnv1(db.draw01, drawWidth, drawHeight, 0u, fbw, psm, zbufAddr, zpsm, ztest, false);
+-        seedGsDrawEnv2(db.draw02, drawWidth, drawHeight, 0u, fbw, psm, zbufAddr, zpsm, ztest, false);
++        seedGsDrawEnv1(db.draw01, drawWidth, drawHeight, fbpB, fbw, psm, zbufAddr, zpsm, ztest, false);
++        seedGsDrawEnv2(db.draw02, drawWidth, drawHeight, fbpB, fbw, psm, zbufAddr, zpsm, ztest, false);
+         db.giftag1 = db.giftag0;
+-        seedGsDrawEnv1(db.draw11, drawWidth, drawHeight, fbp1, fbw, psm, zbufAddr, zpsm, ztest, false);
+-        seedGsDrawEnv2(db.draw12, drawWidth, drawHeight, fbp1, fbw, psm, zbufAddr, zpsm, ztest, false);
++        seedGsDrawEnv1(db.draw11, drawWidth, drawHeight, fbpA, fbw, psm, zbufAddr, zpsm, ztest, false);
++        seedGsDrawEnv2(db.draw12, drawWidth, drawHeight, fbpA, fbw, psm, zbufAddr, zpsm, ztest, false);
+         if (seedClear)
+         {
+             seedGsClearPacket(db.clear0, drawWidth, drawHeight, 0u, ztest, false);
+diff --git a/ps2xTest/src/ps2_gs_tests.cpp b/ps2xTest/src/ps2_gs_tests.cpp
+index 0458a8c..39f9989 100644
+--- a/ps2xTest/src/ps2_gs_tests.cpp
++++ b/ps2xTest/src/ps2_gs_tests.cpp
+@@ -303,6 +303,14 @@ namespace
+                static_cast<uint32_t>(kColumnTable32[y & 0x7u][x & 0x7u]) * 4u;
+     }
+ 
++    // Byte offset of the buffer draw env 0 (FRAME_1 at +0x60 in sceGsDBuffDc) targets.
++    uint32_t seededDraw0BaseBytes(const std::vector<uint8_t> &rdram, uint32_t envAddr)
++    {
++        uint64_t frame = 0u;
++        std::memcpy(&frame, rdram.data() + envAddr + 0x60u, sizeof(frame));
++        return static_cast<uint32_t>(frame & 0x1FFull) * 8192u;
++    }
++
+     void writeReferencePSMCT32Pixel(std::vector<uint8_t> &vram,
+                                     uint32_t fbp,
+                                     uint32_t fbw,
+@@ -564,6 +572,13 @@ void register_ps2_gs_tests()
+             t.Equals(xyoffset10 & 0xFFFFull, 0x6C00ull, "dbuff draw env should seed OFX in 12.4 fixed point");
+             t.Equals((xyoffset10 >> 32) & 0xFFFFull, 0x7200ull, "dbuff draw env should seed OFY in 12.4 fixed point");
+             t.Equals(xyoffset10Addr, 0x18ull, "dbuff draw env should seed XYOFFSET_1 register id");
++            t.Equals(dispfb0 & 0x1FFull, 0ull,
++                     "dbuff display env 0 should sit at FBP 0, not on the depth buffer (libgraph layout)");
++            constexpr uint32_t kDraw11Offset = 0x1D0u;
++            uint64_t frame11 = 0u;
++            std::memcpy(&frame11, rdram.data() + kEnvAddr + kDraw11Offset, sizeof(frame11));
++            t.Equals(frame11 & 0x1FFull, 0ull,
++                     "dbuff draw env 1 should draw into display env 0's buffer at FBP 0");
+ 
+             dispfb0 = (dispfb0 & ~0x1FFull) | 150ull;
+             std::memcpy(rdram.data() + kEnvAddr + kDispFbOffset, &dispfb0, sizeof(dispfb0));
+@@ -613,8 +628,9 @@ void register_ps2_gs_tests()
+             std::memset(rdram.data() + kEnvAddr, 0xCD, kDBuffSize);
+             std::memcpy(rdram.data() + kStackAddr + 16u, &kZTest, sizeof(kZTest));
+             std::memcpy(rdram.data() + kStackAddr + 24u, &kEnableClear, sizeof(kEnableClear));
+-            std::memset(runtime.memory().getGSVRAM(), 0xAB, 16u);
+             ps2_stubs::sceGsSetDefDBuffDc(rdram.data(), &ctx, &runtime);
++            const uint32_t drawBase = seededDraw0BaseBytes(rdram, kEnvAddr);
++            std::memset(runtime.memory().getGSVRAM() + drawBase, 0xAB, 16u);
+ 
+             uint64_t testAAddr = 0u;
+             uint64_t primAddr = 0u;
+@@ -645,7 +661,7 @@ void register_ps2_gs_tests()
+             ps2_stubs::sceGsSwapDBuffDc(rdram.data(), &ctx, &runtime);
+ 
+             uint32_t clearedPixel = 0u;
+-            std::memcpy(&clearedPixel, runtime.memory().getGSVRAM(), sizeof(clearedPixel));
++            std::memcpy(&clearedPixel, runtime.memory().getGSVRAM() + drawBase, sizeof(clearedPixel));
+             t.Equals(clearedPixel, kClearColor,
+                      "sceGsSwapDBuffDc should execute the seeded clear packet against the active draw buffer");
+ 
+@@ -653,7 +669,8 @@ void register_ps2_gs_tests()
+             constexpr uint32_t kMidY = 200u;
+             const uint32_t kMidOffset = ((kMidY * 640u) + kMidX) * 4u;
+             uint32_t clearedMidPixel = 0u;
+-            std::memcpy(&clearedMidPixel, runtime.memory().getGSVRAM() + kMidOffset, sizeof(clearedMidPixel));
++            std::memcpy(&clearedMidPixel, runtime.memory().getGSVRAM() + drawBase + kMidOffset,
++                        sizeof(clearedMidPixel));
+             t.Equals(clearedMidPixel, kClearColor,
+                      "sceGsSwapDBuffDc should clear the interior of the active draw buffer, not just the first pixel");
+         });
+@@ -682,9 +699,10 @@ void register_ps2_gs_tests()
+             setRegU32(ctx, 10, 1u);
+             setRegU32(ctx, 29, kStackAddr);
+             std::memset(rdram.data() + kEnvAddr, 0xCD, kDBuffSize);
+-            std::memset(runtime.memory().getGSVRAM(), 0xAB, 16u);
+ 
+             ps2_stubs::sceGsSetDefDBuffDc(rdram.data(), &ctx, &runtime);
++            const uint32_t drawBase = seededDraw0BaseBytes(rdram, kEnvAddr);
++            std::memset(runtime.memory().getGSVRAM() + drawBase, 0xAB, 16u);
+ 
+             uint64_t rgbaqAddr = 0u;
+             std::memcpy(&rgbaqAddr, rdram.data() + kEnvAddr + kRgbaqAddrOffset, sizeof(rgbaqAddr));
+@@ -700,7 +718,7 @@ void register_ps2_gs_tests()
+             ps2_stubs::sceGsSwapDBuffDc(rdram.data(), &ctx, &runtime);
+ 
+             uint32_t clearedPixel = 0u;
+-            std::memcpy(&clearedPixel, runtime.memory().getGSVRAM(), sizeof(clearedPixel));
++            std::memcpy(&clearedPixel, runtime.memory().getGSVRAM() + drawBase, sizeof(clearedPixel));
+             t.Equals(clearedPixel, kClearColor,
+                      "sceGsSwapDBuffDc should honor a clear packet seeded from register-based trailing args");
+         });
